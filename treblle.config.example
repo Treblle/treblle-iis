@@ -1,0 +1,14 @@
+{
+  "api_key":    "YOUR_TREBLLE_API_KEY",
+  "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
+
+  "treblle_url": "https://ingress.treblle.com",
+
+  "debug": false,
+
+  "include_routes": [
+    { "host": "api.example.com" },
+    { "host": "api.example.com", "path": "/v2" },
+    { "host": "service.example.com", "path": "/api" }
+  ]
+}

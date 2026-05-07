@@ -1,0 +1,4 @@
+LIBRARY TreblleModule
+
+EXPORTS
+    RegisterModule
