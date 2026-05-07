@@ -72,9 +72,12 @@ bool HttpSender::Send(const std::string& jsonPayload,
     std::wstring headers = L"Content-Type: application/json\r\n";
     if (!sdkToken.empty()) {
         int wTokenLen = MultiByteToWideChar(CP_UTF8, 0, sdkToken.c_str(), -1, nullptr, 0);
-        std::wstring wToken(wTokenLen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, sdkToken.c_str(), -1, &wToken[0], wTokenLen);
-        headers += L"x-api-key: " + wToken + L"\r\n";
+        if (wTokenLen > 1) {
+            std::wstring wToken(wTokenLen, L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, sdkToken.c_str(), -1, &wToken[0], wTokenLen);
+            wToken.resize(wTokenLen - 1); // strip null terminator before concatenating
+            headers += L"x-api-key: " + wToken + L"\r\n";
+        }
     }
 
     BOOL ok = WinHttpSendRequest(hReq,
