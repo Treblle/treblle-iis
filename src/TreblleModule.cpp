@@ -117,7 +117,7 @@ bool CTreblleModule::IsTrackedMethod(const std::string& method) {
 }
 
 void CTreblleModule::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
-    static const struct { HttpHeaderId id; const char* name; } kKnown[] = {
+    static const struct { int id; const char* name; } kKnown[] = {
         { HttpHeaderHost,            "host" },
         { HttpHeaderContentType,     "content-type" },
         { HttpHeaderContentLength,   "content-length" },
@@ -172,10 +172,12 @@ void CTreblleModule::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
 }
 
 std::string CTreblleModule::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
-    // Determine scheme
-    bool isSecure = false;
-    IHttpConnection* pConn = pCtx->GetConnection();
-    if (pConn) isSecure = pConn->IsSecureConnection() != FALSE;
+    // Determine scheme via HTTPS server variable
+    DWORD  cbHttps = 0;
+    PCSTR  pHttps  = nullptr;
+    bool isSecure  = SUCCEEDED(pCtx->GetServerVariable("HTTPS", &pHttps, &cbHttps))
+                     && pHttps && cbHttps > 0
+                     && _strnicmp(pHttps, "on", 2) == 0;
     std::string scheme = isSecure ? "https" : "http";
 
     // Host
@@ -269,8 +271,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
                 return RQ_NOTIFICATION_CONTINUE;
             }
             USHORT status = 0;
-            PCSTR  reason = nullptr;
-            pResp->GetStatus(&status, &reason);
+            pResp->GetStatus(&status);
             ctx_.statusCode = status;
             CollectResponseHeaders(pRaw);
             ctx_.responseHeadersDone = true;

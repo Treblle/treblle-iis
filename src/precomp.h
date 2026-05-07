@@ -11,7 +11,13 @@
 #include <winhttp.h>
 
 // IIS Native Module SDK - included with Windows SDK 10+
+#include <http.h>
 #include <httpserv.h>
+
+// HttpVerbPATCH was added in Windows 8 SDK - define fallback if missing
+#ifndef HttpVerbPATCH
+#define HttpVerbPATCH ((HTTP_VERB)28)
+#endif
 
 #include <string>
 #include <vector>

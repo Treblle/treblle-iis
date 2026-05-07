@@ -146,9 +146,9 @@ OsInfo GetOsInfo() {
     static std::once_flag flag;
     std::call_once(flag, []() {
         // Version via RtlGetVersion (avoids compatibility shim)
-        typedef NTSTATUS(WINAPI* RtlGetVersionFn)(PRTL_OSVERSIONINFOW);
+        typedef LONG (WINAPI* RtlGetVersionFn)(OSVERSIONINFOEXW*);
         HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
-        RTL_OSVERSIONINFOW osvi = {};
+        OSVERSIONINFOEXW osvi = {};
         osvi.dwOSVersionInfoSize = sizeof(osvi);
         if (hNtdll) {
             auto fn = (RtlGetVersionFn)GetProcAddress(hNtdll, "RtlGetVersion");
