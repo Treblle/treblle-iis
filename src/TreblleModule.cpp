@@ -194,7 +194,7 @@ std::string CTreblleModule::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw)
 
 REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
-    __try {
+    try {
         Config::Instance().CheckReload();
         TreblleConfig cfg = Config::Instance().Get();
         if (!cfg.loaded || cfg.includeRoutes.empty()) return RQ_NOTIFICATION_CONTINUE;
@@ -247,7 +247,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         if (hasJsonBody) {
             ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
@@ -257,7 +257,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
 REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
     IHttpContext* pCtx, ISendResponseProvider*) {
     if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
-    __try {
+    try {
         IHttpResponse* pResp = pCtx->GetResponse();
         HTTP_RESPONSE* pRaw  = pResp->GetRawHttpResponse();
         if (!pRaw) return RQ_NOTIFICATION_CONTINUE;
@@ -279,7 +279,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
 
         // Accumulate body chunks (may be called multiple times for chunked responses)
         CaptureResponseChunks(pRaw, ctx_.responseBody, ctx_.responseSize, ctx_.responseBodyTruncated);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
@@ -289,7 +289,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
 REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
     if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
-    __try {
+    try {
         LARGE_INTEGER endTime;
         QueryPerformanceCounter(&endTime);
 
@@ -303,7 +303,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
         std::string payload = PayloadBuilder::Build(ctx_, cfg, loadTimeMs, pCtx);
 
         if (g_pQueue) g_pQueue->Push(std::move(payload));
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
