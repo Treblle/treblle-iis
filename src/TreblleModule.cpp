@@ -197,7 +197,20 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
     try {
         Config::Instance().CheckReload();
         TreblleConfig cfg = Config::Instance().Get();
+
+        LogDebug("OnBeginRequest fired. loaded=" + std::string(cfg.loaded ? "true" : "false")
+            + " routes=" + std::to_string(cfg.includeRoutes.size()));
+
         if (!cfg.loaded || cfg.includeRoutes.empty()) return RQ_NOTIFICATION_CONTINUE;
+
+        IHttpRequest* pReq2 = pCtx->GetRequest();
+        HTTP_REQUEST* pRaw2 = pReq2->GetRawHttpRequest();
+        if (pRaw2) {
+            PCSTR pHostRaw2 = pRaw2->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
+            std::string host2 = pHostRaw2 ? pHostRaw2 : "(null)";
+            std::string url2  = pRaw2->pRawUrl ? pRaw2->pRawUrl : "(null)";
+            LogDebug("Request host=" + host2 + " url=" + url2);
+        }
 
         IHttpRequest* pReq = pCtx->GetRequest();
         HTTP_REQUEST* pRaw = pReq->GetRawHttpRequest();
