@@ -73,20 +73,35 @@ void CTreblleModuleFactory::Terminate() {
 HRESULT __stdcall RegisterModule(DWORD,
                                   IHttpModuleRegistrationInfo* pInfo,
                                   IHttpServer*) {
+    LogDebug("RegisterModule called");
+
     // Locate and load treblle.config from the same directory as this DLL
     WCHAR dllPath[MAX_PATH] = {};
     GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
-    Config::Instance().Load(dllPath);
+
+    // Log the config path
+    char narrowPath[MAX_PATH] = {};
+    WideCharToMultiByte(CP_UTF8, 0, dllPath, -1, narrowPath, MAX_PATH, nullptr, nullptr);
+    LogDebug(std::string("DLL path: ") + narrowPath);
+
+    bool loaded = Config::Instance().Load(dllPath);
+    LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"));
+
+    TreblleConfig cfg = Config::Instance().Get();
+    LogDebug("Routes count: " + std::to_string(cfg.includeRoutes.size()));
 
     // Start the background sender thread
     g_pQueue = new(std::nothrow) AsyncQueue();
     if (!g_pQueue) return E_OUTOFMEMORY;
     g_hWorkerThread = CreateThread(nullptr, 0, WorkerThreadProc, nullptr, 0, nullptr);
 
-    return pInfo->SetRequestNotifications(
+    HRESULT hr = pInfo->SetRequestNotifications(
         new(std::nothrow) CTreblleModuleFactory(),
         RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
         0);
+
+    LogDebug(std::string("SetRequestNotifications hr=") + std::to_string(hr));
+    return hr;
 }
 
 // ── Helper methods ────────────────────────────────────────────────────────────
