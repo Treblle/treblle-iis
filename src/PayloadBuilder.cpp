@@ -62,9 +62,8 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
 
     payload += "{";
 
-    // Top-level fields — api_key falls back to sdk_token for autodiscovery
-    const std::string& apiKey = cfg.apiKey.empty() ? cfg.sdkToken : cfg.apiKey;
-    payload += "\"api_key\":\"";       payload += JsonEscape(apiKey);            payload += "\",";
+    // Top-level fields
+    payload += "\"api_key\":\"";       payload += JsonEscape(cfg.apiKey);        payload += "\",";
     payload += "\"sdk_token\":\"";     payload += JsonEscape(cfg.sdkToken);      payload += "\",";
     payload += "\"sdk\":\"iis-native\",";
     payload += "\"version\":23,";

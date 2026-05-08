@@ -10,7 +10,7 @@ struct RouteFilter {
 
 struct TreblleConfig {
     std::string              sdkToken;
-    std::string              apiKey;      // optional — if omitted, sdkToken is used
+    std::string              apiKey;      // required — API project key from Treblle platform
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
     std::vector<RouteFilter> includeRoutes;

@@ -126,15 +126,15 @@ bool FindBool(const std::string& json, const std::string& key, bool defaultVal =
     return defaultVal;
 }
 
-// Derive a stable UUID-style internal ID from host+path using FNV-1a (no dependencies).
-static std::string ComputeInternalId(const std::string& host, const std::string& path) {
+// Derive a stable UUID-style internal ID from an input string using FNV-1a (no dependencies).
+static std::string ComputeInternalId(const std::string& input, const std::string& /*unused*/) {
     auto fnv1a = [](const std::string& s, uint64_t seed) -> uint64_t {
         uint64_t h = seed;
         for (unsigned char c : s) { h ^= c; h *= 1099511628211ULL; }
         return h;
     };
-    uint64_t hi = fnv1a("treblle:" + host + ":" + path, 14695981039346656037ULL);
-    uint64_t lo = fnv1a("route:"   + path + ":" + host, 14695981039346656037ULL);
+    uint64_t hi = fnv1a("treblle:" + input, 14695981039346656037ULL);
+    uint64_t lo = fnv1a("route:"   + input, 14695981039346656037ULL);
     char buf[37];
     snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%04x%08x",
         (uint32_t)(hi >> 32),
@@ -176,8 +176,12 @@ std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
         if (!rf.path.empty() && rf.path[0] != '/') rf.path = "/" + rf.path;
 
         if (!rf.host.empty()) {
-            rf.internalId   = ComputeInternalId(rf.host, rf.path);
-            rf.internalName = rf.path.empty() ? rf.host : rf.host + rf.path;
+            std::string name = FindString(obj, "name");
+            rf.internalName = name.empty()
+                ? (rf.path.empty() ? rf.host : rf.host + rf.path)
+                : name;
+            // Include the name in the hash so projects with the same host+path stay distinct
+            rf.internalId = ComputeInternalId(rf.host + rf.path + rf.internalName, "");
             routes.push_back(std::move(rf));
         }
 
