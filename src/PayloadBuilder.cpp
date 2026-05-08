@@ -62,11 +62,11 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
 
     payload += "{";
 
-    // Top-level fields
-    payload += "\"api_key\":\"";       payload += JsonEscape(cfg.apiKey);        payload += "\",";
-    payload += "\"sdk_token\":\"";     payload += JsonEscape(cfg.sdkToken);      payload += "\",";
+    // Top-level fields — api_key = sdk_token (auth), project_id = api_key (routing)
+    payload += "\"api_key\":\"";       payload += JsonEscape(cfg.sdkToken);      payload += "\",";
+    payload += "\"project_id\":\"";    payload += JsonEscape(cfg.apiKey);        payload += "\",";
     payload += "\"sdk\":\"Netcore\",";
-    payload += "\"version\":23,";
+    payload += "\"version\":20,";
     payload += "\"internal_id\":\"";   payload += JsonEscape(ctx.internalId);    payload += "\",";
     payload += "\"internal_name\":\""; payload += JsonEscape(ctx.internalName);  payload += "\",";
 

@@ -9,8 +9,8 @@ struct RouteFilter {
 };
 
 struct TreblleConfig {
-    std::string              sdkToken;
-    std::string              apiKey;      // required — API project key from Treblle platform
+    std::string              sdkToken;    // workspace auth token → sent as api_key in payload and x-api-key header
+    std::string              apiKey;      // API project key → sent as project_id in payload
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
     std::vector<RouteFilter> includeRoutes;
