@@ -3,7 +3,7 @@
 #include "BodyCapture.h"
 #include "Utils.h"
 
-static const char* kSdkName    = "iis-native";
+static const char* kSdkName    = "Netcore";
 static const char* kSdkVersion = "1.0.0";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
     // Top-level fields
     payload += "\"api_key\":\"";       payload += JsonEscape(cfg.apiKey);        payload += "\",";
     payload += "\"sdk_token\":\"";     payload += JsonEscape(cfg.sdkToken);      payload += "\",";
-    payload += "\"sdk\":\"iis-native\",";
+    payload += "\"sdk\":\"Netcore\",";
     payload += "\"version\":23,";
     payload += "\"internal_id\":\"";   payload += JsonEscape(ctx.internalId);    payload += "\",";
     payload += "\"internal_name\":\""; payload += JsonEscape(ctx.internalName);  payload += "\",";
