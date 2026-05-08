@@ -193,6 +193,7 @@ bool Config::LoadFromFile() {
 
     TreblleConfig newCfg;
     newCfg.sdkToken      = FindString(json, "sdk_token");
+    newCfg.apiKey        = FindString(json, "api_key");
     newCfg.debugMode     = FindBool(json, "debug", false);
     newCfg.includeRoutes = ParseIncludeRoutes(json);
     newCfg.loaded        = true;
