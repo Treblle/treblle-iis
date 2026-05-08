@@ -241,10 +241,12 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
         std::string path   = ParseQueryPath(rawUrl);
 
-        // Route match — also captures the internal ID for autodiscovery
-        std::string internalId = Config::Instance().MatchRoute(host, path);
-        if (internalId.empty()) return RQ_NOTIFICATION_CONTINUE;
-        ctx_.internalId = internalId;
+        // Route match — captures internal ID and name for autodiscovery
+        std::string internalId, internalName;
+        if (!Config::Instance().MatchRoute(host, path, internalId, internalName))
+            return RQ_NOTIFICATION_CONTINUE;
+        ctx_.internalId   = internalId;
+        ctx_.internalName = internalName;
 
         // Method check
         std::string method = GetMethodString(pRaw->Verb,

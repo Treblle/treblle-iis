@@ -33,15 +33,19 @@ TreblleConfig Config::Get() const {
     return config_;
 }
 
-std::string Config::MatchRoute(const std::string& host, const std::string& urlPath) const {
+bool Config::MatchRoute(const std::string& host, const std::string& urlPath,
+                        std::string& outInternalId, std::string& outInternalName) const {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& route : config_.includeRoutes) {
         if (!_stricmp(route.host.c_str(), host.c_str())) {
-            if (route.path.empty() || StartsWithCI(urlPath, route.path))
-                return route.internalId;
+            if (route.path.empty() || StartsWithCI(urlPath, route.path)) {
+                outInternalId   = route.internalId;
+                outInternalName = route.internalName;
+                return true;
+            }
         }
     }
-    return {};
+    return false;
 }
 
 // ── Minimal JSON parser ───────────────────────────────────────────────────────
@@ -172,7 +176,8 @@ std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
         if (!rf.path.empty() && rf.path[0] != '/') rf.path = "/" + rf.path;
 
         if (!rf.host.empty()) {
-            rf.internalId = ComputeInternalId(rf.host, rf.path);
+            rf.internalId   = ComputeInternalId(rf.host, rf.path);
+            rf.internalName = rf.path.empty() ? rf.host : rf.host + rf.path;
             routes.push_back(std::move(rf));
         }
 

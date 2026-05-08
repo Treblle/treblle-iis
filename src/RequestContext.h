@@ -17,6 +17,7 @@ struct RequestContext {
     std::string userAgent;
     std::string protocol;
     std::string internalId;
+    std::string internalName;
 
     std::string requestBody;
     std::string responseBody;

@@ -2,9 +2,10 @@
 #include "precomp.h"
 
 struct RouteFilter {
-    std::string host;        // required, lowercase, e.g. "api.example.com"
-    std::string path;        // optional, e.g. "/v1" — empty means match all paths on host
-    std::string internalId;  // stable UUID derived from host+path, used for autodiscovery
+    std::string host;          // required, lowercase, e.g. "api.example.com"
+    std::string path;          // optional, e.g. "/v1" — empty means match all paths on host
+    std::string internalId;    // stable UUID derived from host+path, used for autodiscovery
+    std::string internalName;  // human-readable name shown on Treblle platform
 };
 
 struct TreblleConfig {
@@ -32,8 +33,9 @@ public:
     // Returns a snapshot of the current config (copied under lock).
     TreblleConfig Get() const;
 
-    // Returns the internalId of the first matching route, or empty string if no match.
-    std::string MatchRoute(const std::string& host, const std::string& urlPath) const;
+    // Returns the first matching RouteFilter, or nullptr if no match.
+    bool MatchRoute(const std::string& host, const std::string& urlPath,
+                    std::string& outInternalId, std::string& outInternalName) const;
 
 private:
     Config() = default;
