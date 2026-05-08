@@ -2,12 +2,12 @@
 #include "precomp.h"
 
 struct RouteFilter {
-    std::string host;  // required, lowercase, e.g. "api.example.com"
-    std::string path;  // optional, e.g. "/v1" — empty means match all paths on host
+    std::string host;        // required, lowercase, e.g. "api.example.com"
+    std::string path;        // optional, e.g. "/v1" — empty means match all paths on host
+    std::string internalId;  // stable UUID derived from host+path, used for autodiscovery
 };
 
 struct TreblleConfig {
-    std::string              apiKey;
     std::string              sdkToken;
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
@@ -31,8 +31,8 @@ public:
     // Returns a snapshot of the current config (copied under lock).
     TreblleConfig Get() const;
 
-    // Returns true if 'host' (lowercase) and 'urlPath' match any include_route entry.
-    bool Matches(const std::string& host, const std::string& urlPath) const;
+    // Returns the internalId of the first matching route, or empty string if no match.
+    std::string MatchRoute(const std::string& host, const std::string& urlPath) const;
 
 private:
     Config() = default;

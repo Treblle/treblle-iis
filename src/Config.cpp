@@ -33,15 +33,15 @@ TreblleConfig Config::Get() const {
     return config_;
 }
 
-bool Config::Matches(const std::string& host, const std::string& urlPath) const {
+std::string Config::MatchRoute(const std::string& host, const std::string& urlPath) const {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& route : config_.includeRoutes) {
         if (!_stricmp(route.host.c_str(), host.c_str())) {
-            if (route.path.empty()) return true;
-            if (StartsWithCI(urlPath, route.path)) return true;
+            if (route.path.empty() || StartsWithCI(urlPath, route.path))
+                return route.internalId;
         }
     }
-    return false;
+    return {};
 }
 
 // ── Minimal JSON parser ───────────────────────────────────────────────────────
@@ -151,14 +151,36 @@ std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
         // Ensure path starts with '/' if non-empty
         if (!rf.path.empty() && rf.path[0] != '/') rf.path = "/" + rf.path;
 
-        if (!rf.host.empty())
+        if (!rf.host.empty()) {
+            rf.internalId = ComputeInternalId(rf.host, rf.path);
             routes.push_back(std::move(rf));
+        }
 
         pos = objEnd + 1;
         pos = SkipWS(json, pos);
         if (pos < json.size() && json[pos] == ',') ++pos;
     }
     return routes;
+}
+
+// Derive a stable UUID-style internal ID from host+path using FNV-1a (no dependencies).
+static std::string ComputeInternalId(const std::string& host, const std::string& path) {
+    auto fnv1a = [](const std::string& s, uint64_t seed) -> uint64_t {
+        uint64_t h = seed;
+        for (unsigned char c : s) { h ^= c; h *= 1099511628211ULL; }
+        return h;
+    };
+    uint64_t hi = fnv1a("treblle:" + host + ":" + path, 14695981039346656037ULL);
+    uint64_t lo = fnv1a("route:"   + path + ":" + host, 14695981039346656037ULL);
+    char buf[37];
+    snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%04x%08x",
+        (uint32_t)(hi >> 32),
+        (uint16_t)(hi >> 16),
+        (uint16_t)(hi & 0xFFFF),
+        (uint16_t)(lo >> 48),
+        (uint16_t)(lo >> 32),
+        (uint32_t)(lo & 0xFFFFFFFF));
+    return buf;
 }
 
 } // namespace
@@ -170,7 +192,6 @@ bool Config::LoadFromFile() {
     if (json.empty()) return false;
 
     TreblleConfig newCfg;
-    newCfg.apiKey        = FindString(json, "api_key");
     newCfg.sdkToken      = FindString(json, "sdk_token");
     newCfg.debugMode     = FindBool(json, "debug", false);
     newCfg.includeRoutes = ParseIncludeRoutes(json);
