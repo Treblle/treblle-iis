@@ -27,9 +27,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
     if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
 
     if (debugMode) {
-        std::string preview = jsonPayload.substr(0, 500);
-        if (jsonPayload.size() > 500) preview += "...";
-        LogDebug("Treblle: sending payload: " + preview);
+        LogDebug("Treblle: sending payload: " + jsonPayload);
     }
 
     // Convert URL to wide string for WinHTTP
