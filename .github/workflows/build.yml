@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        run: msbuild TreblleModule.sln /p:Configuration=Release /p:Platform=x64 /m
+
+      - name: Upload DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreblleModule-${{ github.sha }}
+          path: x64/Release/TreblleModule.dll
+          retention-days: 30
