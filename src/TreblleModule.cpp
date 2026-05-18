@@ -329,7 +329,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
 
 REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
-    if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
+    if (!ctx_.shouldTrack || !ctx_.responseHeadersDone) return RQ_NOTIFICATION_CONTINUE;
     try {
         LARGE_INTEGER endTime;
         QueryPerformanceCounter(&endTime);
