@@ -3,7 +3,8 @@
 
 // Sends a JSON payload to a Treblle ingress URL using WinHTTP.
 // One instance should be created per background worker thread and reused
-// across sends so the session handle is kept alive (enables keep-alive).
+// across sends. The session and connection handles are cached so TCP
+// connections and TLS sessions are reused across requests.
 class HttpSender {
 public:
     HttpSender();
@@ -17,5 +18,15 @@ public:
               bool               debugMode);
 
 private:
-    HINTERNET hSession_;
+    // Open (or reuse) the connection handle for the given URL.
+    // Re-parses and reconnects only when the URL changes.
+    bool EnsureConnected(const std::string& url, bool debugMode);
+
+    HINTERNET    hSession_  = nullptr;
+    HINTERNET    hConnect_  = nullptr; // cached per-host connection handle
+    std::string  cachedUrl_;           // URL hConnect_ was opened for
+    std::wstring wHost_;
+    std::wstring wPath_;
+    INTERNET_PORT port_     = 0;
+    bool         isHttps_   = false;
 };

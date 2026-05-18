@@ -6,9 +6,16 @@
 
   "debug": false,
 
-  "include_routes": [
-    { "host": "api.example.com" },
-    { "host": "api.example.com", "path": "/v2" },
-    { "host": "service.example.com", "path": "/api" }
+  "exclude_routes": [
+    { "host": "internal.example.com" },
+    { "host": "api.example.com", "path": "/health" },
+    { "host": "api.example.com", "path": "/metrics" }
+  ],
+
+  "masked_keywords": [
+    "password", "pwd", "secret",
+    "password_confirmation", "passwordConfirmation",
+    "cc", "card_number", "cardNumber", "ccv",
+    "credit_score", "creditScore", "ssn"
   ]
 }

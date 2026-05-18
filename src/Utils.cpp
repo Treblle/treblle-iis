@@ -146,9 +146,9 @@ OsInfo GetOsInfo() {
     static std::once_flag flag;
     std::call_once(flag, []() {
         // Version via RtlGetVersion (avoids compatibility shim)
-        typedef NTSTATUS(WINAPI* RtlGetVersionFn)(PRTL_OSVERSIONINFOW);
+        typedef LONG (WINAPI* RtlGetVersionFn)(OSVERSIONINFOEXW*);
         HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
-        RTL_OSVERSIONINFOW osvi = {};
+        OSVERSIONINFOEXW osvi = {};
         osvi.dwOSVersionInfoSize = sizeof(osvi);
         if (hNtdll) {
             auto fn = (RtlGetVersionFn)GetProcAddress(hNtdll, "RtlGetVersion");
@@ -191,12 +191,35 @@ std::string GetIISVersion(IHttpContext* pCtx) {
     return "IIS";
 }
 
+// ── Host identity ─────────────────────────────────────────────────────────────
+
+std::string ComputeHostId(const std::string& host) {
+    auto fnv1a = [](const std::string& s, uint64_t seed) -> uint64_t {
+        uint64_t h = seed;
+        for (unsigned char c : s) { h ^= c; h *= 1099511628211ULL; }
+        return h;
+    };
+    uint64_t hi = fnv1a("treblle:" + host, 14695981039346656037ULL);
+    uint64_t lo = fnv1a("route:"   + host, 14695981039346656037ULL);
+    char buf[37];
+    snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%04x%08x",
+        (uint32_t)(hi >> 32),
+        (uint16_t)(hi >> 16),
+        (uint16_t)(hi & 0xFFFF),
+        (uint16_t)(lo >> 48),
+        (uint16_t)(lo >> 32),
+        (uint32_t)(lo & 0xFFFFFFFF));
+    return buf;
+}
+
 // ── Debug logging ─────────────────────────────────────────────────────────────
 
-void LogDebug(const std::string& msg) {
+void LogDebug(const std::string& msg, bool enabled) {
+    if (!enabled) return;
+    std::string prefixed = "[TREBLLE]: " + msg;
     HANDLE hLog = RegisterEventSourceA(nullptr, "Treblle");
     if (!hLog) return;
-    LPCSTR msgs[] = { msg.c_str() };
+    LPCSTR msgs[] = { prefixed.c_str() };
     ReportEventA(hLog, EVENTLOG_INFORMATION_TYPE, 0, 0, nullptr, 1, 0, msgs, nullptr);
     DeregisterEventSource(hLog);
 }

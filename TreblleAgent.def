@@ -1,4 +1,4 @@
-LIBRARY TreblleModule
+LIBRARY TreblleAgent
 
 EXPORTS
     RegisterModule

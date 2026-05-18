@@ -1,12 +1,13 @@
 #pragma once
 #include "precomp.h"
+#include "Constants.h"
 
 // Thread-safe, bounded FIFO queue of serialized JSON payload strings.
 // Producer: IIS request threads (Push).
 // Consumer: single background worker thread (Pop).
 class AsyncQueue {
 public:
-    static const size_t kMaxSize = 5000;
+    static constexpr size_t kMaxSize = TreblleConst::kQueueMaxSize;
 
     AsyncQueue();
     ~AsyncQueue();
@@ -14,7 +15,7 @@ public:
     // Enqueue a payload. If the queue is full, the oldest entry is dropped.
     void Push(std::string payload);
 
-    // Block until a payload is available or timeoutMs elapses.
+    // Block until a payload is available, timeoutMs elapses, or Shutdown() is called.
     // Returns true and fills 'out' on success; false on timeout or shutdown.
     bool Pop(std::string& out, DWORD timeoutMs);
 
@@ -27,5 +28,6 @@ private:
     std::queue<std::string> queue_;
     mutable std::mutex      mutex_;
     HANDLE                  semaphore_;
+    HANDLE                  hShutdown_;
     std::atomic<bool>       shutdown_;
 };

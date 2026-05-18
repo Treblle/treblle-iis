@@ -2,16 +2,17 @@
 #include "precomp.h"
 
 struct RouteFilter {
-    std::string host;  // required, lowercase, e.g. "api.example.com"
-    std::string path;  // optional, e.g. "/v1" — empty means match all paths on host
+    std::string host;   // required, lowercase, e.g. "api.example.com"
+    std::string path;   // optional prefix, e.g. "/v1" — empty means entire host
 };
 
 struct TreblleConfig {
-    std::string              apiKey;
-    std::string              sdkToken;
+    std::string              sdkToken;    // workspace auth token → sent as api_key in payload and x-api-key header
+    std::string              apiKey;      // API project key → sent as project_id in payload
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
-    std::vector<RouteFilter> includeRoutes;
+    std::vector<RouteFilter> excludeRoutes;
+    std::vector<std::string> maskedKeywords; // keys whose values are replaced with '*'
     bool                     loaded      = false;
 };
 
@@ -22,17 +23,18 @@ public:
     static Config& Instance();
 
     // Load config from <dllPath directory>\treblle.config.
-    // Safe to call from RegisterModule; returns false on parse error (silently).
+    // Safe to call from RegisterModule; returns false on parse/validation error.
     bool Load(const std::wstring& dllPath);
 
     // Check if the config file has been modified and reload if so.
     void CheckReload();
 
-    // Returns a snapshot of the current config (copied under lock).
-    TreblleConfig Get() const;
+    // Returns a snapshot of the current config as a shared_ptr.
+    // Callers hold the pointer for the duration of the request — no lock needed after Get().
+    std::shared_ptr<const TreblleConfig> Get() const;
 
-    // Returns true if 'host' (lowercase) and 'urlPath' match any include_route entry.
-    bool Matches(const std::string& host, const std::string& urlPath) const;
+    // Returns true if the host+path matches an exclude_routes entry.
+    bool IsExcluded(const std::string& host, const std::string& urlPath) const;
 
 private:
     Config() = default;
@@ -41,8 +43,8 @@ private:
 
     bool LoadFromFile();
 
-    mutable std::mutex mutex_;
-    TreblleConfig      config_;
-    std::wstring       configPath_;
-    FILETIME           lastWriteTime_ = {};
+    mutable std::mutex                   mutex_;
+    std::shared_ptr<TreblleConfig>       config_ = std::make_shared<TreblleConfig>();
+    std::wstring                         configPath_;
+    FILETIME                             lastWriteTime_ = {};
 };

@@ -1,19 +1,30 @@
-# Treblle IIS Native HTTP Module
+# Treblle - Runtime Intelligence Platform
 
-A native C++ IIS HTTP Module for **Windows Server 2022 / 2025** that passively monitors JSON API traffic and forwards structured telemetry to [Treblle](https://treblle.com). Zero impact on API availability or latency.
+[Website](http://treblle.com/) • [Documentation](https://docs.treblle.com/) • [Pricing](https://treblle.com/pricing)
 
----
+Discover, Govern, and Secure APIs, Agents, and AI Across Any Cloud, Gateway or Technology.
 
-## What it does
+# Treblle IIS Agent
 
-The module hooks into the IIS request pipeline and, for every matching JSON API request:
+A native C++ IIS agent for **Windows Server 2022 / 2025** that passively monitors JSON API traffic and sends data to [Treblle](https://treblle.com). Zero impact on API availability or latency.
 
-1. Captures the request method, URL, headers, body, and client IP
-2. Captures the response status code, headers, and body
-3. Measures end-to-end request time
-4. Sends the data asynchronously (off the IIS thread) to Treblle's ingress API
+## How it works
 
-It **never** blocks a request, **never** modifies a response, and **never** crashes or throws errors that would affect your APIs. If anything goes wrong internally it silently discards the telemetry.
+```
+IIS Worker Process (w3wp.exe)
+  └── TreblleAgent.dll
+        ├── OnBeginRequest   → route check → capture request headers + body
+        ├── OnSendResponse   → capture response headers + body chunks
+        └── OnEndRequest     → build JSON payload → push to background queue
+                                    │
+                                    └── Background thread
+                                          └── WinHTTP HTTPS POST → ingress.treblle.com
+```
+
+- **Zero blocking:** The IIS request thread only pushes a string to an in-memory queue. All network I/O happens on a dedicated background thread.
+- **Bounded memory:** The queue holds at most 5,000 pending payloads. If it fills up, the oldest entry is dropped rather than blocking.
+- **No dependencies:** The agent uses only Windows built-in APIs (WinHTTP, Windows SDK). No VC++ Redistributable or third-party packages are required.
+- **Static CRT:** The agent links the C runtime statically (`/MT`) so it works on any Windows Server without additional installs.
 
 ---
 
@@ -32,25 +43,25 @@ It **never** blocks a request, **never** modifies a response, and **never** cras
 
 ## Installation
 
-### Step 1 — Build the DLL
+### Step 1 - Build the DLL
 
-Open `TreblleModule.sln` in **Visual Studio 2022**, select **Release | x64**, and build. The output is:
+Open `TreblleAgent.sln` in **Visual Studio 2022**, select **Release | x64**, and build. The output is:
 
 ```
-x64\Release\TreblleModule.dll
+x64\Release\TreblleAgent.dll
 ```
 
 Alternatively, build from the command line:
 
 ```powershell
-msbuild TreblleModule.sln /p:Configuration=Release /p:Platform=x64
+msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64
 ```
 
-> **Pre-built release:** Download `TreblleModule.dll` from the [Releases](../../releases) page and skip this step.
+> **Pre-built release:** Download `TreblleAgent.dll` from the [Releases](../../releases) page and skip this step.
 
-### Step 2 — Run the installer
+### Step 2 - Run the installer
 
-Copy `TreblleModule.dll` into the `installer\` directory (or build in place), then run:
+Copy `TreblleAgent.dll` into the `installer\` directory (or build in place), then run:
 
 ```powershell
 # Right-click PowerShell → Run as Administrator
@@ -59,20 +70,20 @@ cd path\to\treblle-iis\installer
 ```
 
 The installer will:
-- Copy `TreblleModule.dll` to `C:\iismodules\treblle\`
-- Prompt you for your **API Key**, **SDK Token**, and API route patterns
+- Copy `TreblleAgent.dll` to `C:\iismodules\treblle\`
+- Prompt you for your **API Key**, **SDK Token**, and optional exclusion patterns
 - Write `C:\iismodules\treblle\treblle.config`
-- Register the module globally in IIS
+- Register the agent globally in IIS
 - Restart IIS
 
-### Step 3 — Verify
+### Step 3 - Verify
 
 ```powershell
 # List all registered IIS modules
 %windir%\system32\inetsrv\appcmd.exe list module
 
 # Should include:
-# MODULE "TreblleModule" (image:C:\iismodules\treblle\TreblleModule.dll)
+# MODULE "TreblleAgent" (image:C:\iismodules\treblle\TreblleAgent.dll)
 ```
 
 Make a request to one of your configured API endpoints and check your [Treblle dashboard](https://treblle.com).
@@ -81,7 +92,7 @@ Make a request to one of your configured API endpoints and check your [Treblle d
 
 ## Configuration
 
-The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take effect immediately** — no IIS restart needed. The module checks the file modification time on every request and reloads it if changed.
+The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take effect immediately** — no IIS restart needed. The agent checks the file modification time on every request and reloads it if changed.
 
 ```json
 {
@@ -89,10 +100,16 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
   "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
   "treblle_url": "https://ingress.treblle.com",
   "debug": false,
-  "include_routes": [
-    { "host": "api-1.yourdomain.com" },
-    { "host": "api.yourdomain.com", "path": "/v2" },
-    { "host": "service.yourdomain.com", "path": "/api" }
+  "exclude_routes": [
+    { "host": "internal.yourdomain.com" },
+    { "host": "api.yourdomain.com", "path": "/health" },
+    { "host": "api.yourdomain.com", "path": "/metrics" }
+  ],
+  "masked_keywords": [
+    "password", "pwd", "secret",
+    "password_confirmation", "passwordConfirmation",
+    "cc", "card_number", "cardNumber", "ccv",
+    "credit_score", "creditScore", "ssn"
   ]
 }
 ```
@@ -101,109 +118,164 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `api_key` | string | — | **Required.** Your Treblle API key. |
-| `sdk_token` | string | — | **Required.** Your Treblle SDK token. |
+| `api_key` | string |  | **Required.** Your Treblle API key. |
+| `sdk_token` | string |  | **Required.** Your Treblle SDK token. |
 | `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support. |
 | `debug` | bool | `false` | When `true`, errors are written to the Windows Application Event Log (source: `Treblle`). Leave `false` in production. |
-| `include_routes` | array | `[]` | List of route objects to monitor. **Empty = monitor nothing.** |
+| `exclude_routes` | array | `[]` | List of route objects to exclude from monitoring. **Empty = monitor all JSON API traffic.** |
+| `masked_keywords` | array | *(see below)* | List of field names whose values are redacted before sending to Treblle. Omit to use the built-in defaults. Set to `[]` to disable masking entirely. |
 
-Each object in `include_routes`:
+Each object in `exclude_routes`:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host` | string | Yes | Hostname to match (case-insensitive). Must match the HTTP `Host` header, excluding port. |
-| `path` | string | No | URL path prefix to match (case-insensitive). If omitted, all paths on the host are monitored. |
+| `host` | string | Yes | Hostname to exclude (case-insensitive). Must match the HTTP `Host` header, excluding port. |
+| `path` | string | No | URL path prefix to exclude (case-insensitive). If omitted, the entire host is excluded. |
 
 ---
 
-## include_routes explained
+## Excluding Hosts, Routes or Paths
 
-The module monitors **nothing by default**. You opt in by listing exactly which hosts and paths contain your APIs.
+The agent monitors **all JSON API traffic by default**. Use `exclude_routes` to opt specific hosts or paths out.
 
-A request is tracked when:
-- Its `Host` header matches a route's `host` field, **and**
-- Its URL path starts with the route's `path` prefix (if specified)
-- **Both** request and response `Content-Type` contain `application/json`
+A request is tracked unless:
+- Its `Host` header matches an entry's `host` field, **and**
+- Its URL path starts with the entry's `path` prefix (if specified)
+
+All non-JSON responses (HTML, CSS, JS, images) are automatically ignored — no configuration needed for those.
+
+A request is tracked only when:
+- The response `Content-Type` contains `application/json`
 - The HTTP method is one of: `GET POST PUT PATCH DELETE HEAD OPTIONS`
+- It does not match any `exclude_routes` entry
 
 **Common scenarios:**
 
 ```json
-// Entire host is an API
-{ "host": "api.yourdomain.com" }
+// Exclude an entire internal host
+{ "host": "internal.yourdomain.com" }
 
-// One site, multiple API versions
-{ "host": "api.yourdomain.com", "path": "/v1" },
-{ "host": "api.yourdomain.com", "path": "/v2" }
+// Exclude health/metrics endpoints on a specific host
+{ "host": "api.yourdomain.com", "path": "/health" },
+{ "host": "api.yourdomain.com", "path": "/metrics" }
 
-// Multiple services on the same server
-{ "host": "api-1.yourdomain.com" },
-{ "host": "api.yourdomain.com",     "path": "/api2" },
-{ "host": "service3.yourdomain.com","path": "/v1"   }
+// Exclude a legacy API version
+{ "host": "api.yourdomain.com", "path": "/v1" }
 ```
 
-Anything not matching an `include_routes` entry (HTML pages, CSS, JS, images, non-JSON responses) is ignored entirely and produces no overhead.
+If `exclude_routes` is omitted or empty, all JSON API traffic across all hosts is monitored.
 
 ---
 
-## How it works
+## Sensitive data masking
+
+The agent redacts the values of fields whose names match `masked_keywords` before any data leaves the server. Masking is applied to:
+
+- Request body (JSON)
+- Response body (JSON)
+- Request headers
+- Response headers
+
+Each character of a matched value is replaced with `*` so the length is preserved:
 
 ```
-IIS Worker Process (w3wp.exe)
-  └── TreblleModule.dll
-        ├── OnBeginRequest   → route check → capture request headers + body
-        ├── OnSendResponse   → capture response headers + body chunks
-        └── OnEndRequest     → build JSON payload → push to background queue
-                                    │
-                                    └── Background thread
-                                          └── WinHTTP HTTPS POST → ingress.treblle.com
+"password": "hunter2"   →   "password": "*******"
+"cc": "4111111111111111" →   "cc": "****************"
 ```
 
-- **Zero blocking:** The IIS request thread only pushes a string to an in-memory queue. All network I/O happens on a dedicated background thread.
-- **Bounded memory:** The queue holds at most 5,000 pending payloads. If it fills up, the oldest entry is dropped rather than blocking.
-- **No dependencies:** The module uses only Windows built-in APIs (WinHTTP, Windows SDK). No VC++ Redistributable or third-party packages are required.
-- **Static CRT:** The module links the C runtime statically (`/MT`) so it works on any Windows Server without additional installs.
+### Default masked keywords
 
-### Request/response body limits
+The following fields are masked automatically when `masked_keywords` is omitted from the config:
 
-| Condition | Behaviour |
-|-----------|-----------|
-| Body ≤ 2 MB | Captured and sent to Treblle |
-| Body > 2 MB | Replaced with `{"treblle_error": "Payload exceeds 2MB and will not be tracked by Treblle"}` |
-| Non-JSON body | Stored as `{}` |
+`password`, `pwd`, `secret`, `password_confirmation`, `passwordConfirmation`, `cc`, `card_number`, `cardNumber`, `ccv`, `credit_score`, `creditScore`, `ssn`
+
+### Customising the list
+
+Add or remove keywords by specifying your own list. The list replaces the defaults entirely, so include any defaults you want to keep:
+
+```json
+"masked_keywords": [
+  "password", "pwd", "secret",
+  "password_confirmation", "passwordConfirmation",
+  "cc", "card_number", "cardNumber", "ccv",
+  "credit_score", "creditScore", "ssn",
+  "api_token", "access_token", "private_key"
+]
+```
+
+To disable masking completely:
+
+```json
+"masked_keywords": []
+```
 
 ---
 
-## Performance impact
+## Updating The Agent
 
-The module's work on the hot path is minimal:
-- Config check: one `GetFileAttributesEx` call + mutex read (sub-microsecond)
-- Route matching: O(n) string comparison over `include_routes` entries
-- Body reading (request): buffered synchronous read + re-insert for downstream
-- Body reading (response): direct memory access to already-buffered chunks
-- JSON serialisation and network send happen entirely off the IIS thread
-
-In benchmarks on a 32-core Windows Server 2022 machine, the overhead per request is **< 5 µs** on the IIS thread.
-
----
-
-## Updating
-
-1. Build or download the new `TreblleModule.dll`
+1. Build or download the new `TreblleAgent.dll`
 2. Run the installer again — it handles re-registration automatically:
    ```powershell
    .\installer\install.ps1
    ```
-   The installer removes the old module registration and adds the new one.
+   The installer removes the old agent registration and adds the new one.
 
 Alternatively, for a manual update:
 ```powershell
 iisreset /stop
-Copy-Item new\TreblleModule.dll C:\iismodules\treblle\TreblleModule.dll
+Copy-Item new\TreblleAgent.dll C:\iismodules\treblle\TreblleAgent.dll
 iisreset /start
 ```
 
 **Config changes never require a restart** — just edit `treblle.config` and the next request picks up the changes.
+
+---
+
+## Testing
+
+Open a **Developer PowerShell for VS 2022** (or any terminal with the VS environment loaded) and run from the repo root:
+
+```powershell
+# Configure (one-time, or after adding new test files)
+cmake -S tests -B build/tests -G "Visual Studio 17 2022" -A x64
+
+# Build
+cmake --build build/tests --config Release
+
+# Run all tests
+ctest --test-dir build/tests -C Release --output-on-failure
+```
+
+To run a specific suite or test, use the test binary directly:
+
+```powershell
+# All tests with verbose output
+build\tests\Release\TreblleTests.exe
+
+# One suite
+build\tests\Release\TreblleTests.exe --gtest_filter=DataMasker.*
+
+# One specific test
+build\tests\Release\TreblleTests.exe --gtest_filter=DataMasker.SamplePayload_MaskedField
+
+# List all available tests
+build\tests\Release\TreblleTests.exe --gtest_list_tests
+```
+
+### Test coverage
+
+| Suite | What it covers |
+|-------|----------------|
+| `DataMasker` | `MaskJson` — string/number/object/boolean masking, nesting, case-insensitivity, 500 KB size limit; `MaskHeaders` — header value redaction |
+| `Utils` | `JsonEscape`, `ToLower`, `StartsWithCI`, `ParseQueryPath`, `ParseQueryString`, `ComputeHostId` |
+| `Config` | JSON parsing of all fields, default values, `exclude_routes` array, `masked_keywords` array, `IsExcluded` with host-only and host+path rules |
+| `AsyncQueue` | FIFO ordering, empty-queue timeout, shutdown signalling, 5 000-item drop-oldest limit, concurrent push/pop |
+| `BodyCapture` | `IsLikelyJson` — object, array, whitespace trimming, plain text, XML, mismatched braces |
+| `PayloadBuilder` | Full JSON structure against the sample payload, `api_key`/`sdk_token` placement, masking applied before assembly, truncated-body error object |
+
+### Prerequisites
+
+Google Test is fetched automatically by CMake (`FetchContent`) — no manual install needed. An internet connection is required on the first build; subsequent builds use the cached download.
 
 ---
 
@@ -213,13 +285,13 @@ iisreset /start
 .\installer\uninstall.ps1
 ```
 
-This removes the module from IIS and optionally deletes `C:\iismodules\treblle\` including your `treblle.config`.
+This removes the agent from IIS and optionally deletes `C:\iismodules\treblle\` including your `treblle.config`.
 
 ---
 
 ## Debug mode
 
-To diagnose issues, set `"debug": true` in `treblle.config`. The module will write errors to the **Windows Application Event Log** under source `Treblle`.
+To diagnose issues, set `"debug": true` in `treblle.config`. The agent will write errors to the **Windows Application Event Log** under source `Treblle`.
 
 Open Event Viewer → **Windows Logs → Application**, filter by source `Treblle`.
 
@@ -234,24 +306,24 @@ Common log entries:
 
 ## Troubleshooting
 
-**Module doesn't appear in `appcmd list module`**
+**Agent doesn't appear in `appcmd list module`**
 
 - Confirm you ran the installer as Administrator
 - Check `C:\Windows\System32\inetsrv\` for `appcmd.exe`
 - Look in Event Viewer → Windows Logs → System for IIS startup errors
 
-**Module is registered but no data appears in Treblle**
+**Agent is registered but no data appears in Treblle**
 
-1. Check that your `include_routes` entries match the actual hostname and path of your requests
-2. Confirm the API returns `Content-Type: application/json` in the response
+1. Confirm the API returns `Content-Type: application/json` in the response
+2. Check that the host/path is not matched by an `exclude_routes` entry
 3. Enable `debug: true` and check the Application Event Log
 4. Verify network access from the server to `ingress.treblle.com:443`
 
-**IIS fails to start after installing the module**
+**IIS fails to start after installing the agent**
 
 - Confirm the DLL was compiled for **x64** (not x86)
 - Confirm the DLL path in `C:\Windows\System32\inetsrv\config\applicationHost.config` matches the actual file location
-- Temporarily rename `TreblleModule.dll` and restart IIS to confirm it is the cause
+- Temporarily rename `TreblleAgent.dll` and restart IIS to confirm it is the cause
 
 **Request bodies are empty in Treblle**
 

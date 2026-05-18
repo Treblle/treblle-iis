@@ -10,7 +10,7 @@ public:
     static std::string Build(const RequestContext& ctx,
                              const TreblleConfig&  cfg,
                              double                loadTimeMs,
-                             IHttpContext*          pCtx);
+                             const std::string&    iisVersion);
 private:
     static std::string BuildHeadersObject(const std::map<std::string, std::string>& headers);
     static std::string BuildBodyField(const std::string& body, bool truncated);
