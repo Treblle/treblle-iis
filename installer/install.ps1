@@ -1,16 +1,16 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Installs the Treblle IIS Native HTTP Module on Windows Server 2022/2025.
+    Installs the Treblle IIS Agent on Windows Server 2022/2025.
 
 .DESCRIPTION
-    - Copies TreblleModule.dll to C:\iismodules\treblle\
+    - Copies TreblleAgent.dll to C:\iismodules\treblle\
     - Creates treblle.config if it doesn't already exist
     - Registers the module globally in IIS
     - Restarts IIS to activate the module
 
 .PARAMETER DllPath
-    Path to TreblleModule.dll. Defaults to the directory containing this script.
+    Path to TreblleAgent.dll. Defaults to the directory containing this script.
 
 .PARAMETER ConfigPath
     Destination for treblle.config. Defaults to C:\iismodules\treblle\treblle.config.
@@ -27,15 +27,15 @@ $ErrorActionPreference = "Stop"
 # ── Resolve paths ─────────────────────────────────────────────────────────────
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallDir  = "C:\iismodules\treblle"
-$DllDest     = Join-Path $InstallDir "TreblleModule.dll"
+$DllDest     = Join-Path $InstallDir "TreblleAgent.dll"
 $ConfigDest  = if ($ConfigPath) { $ConfigPath } else { Join-Path $InstallDir "treblle.config" }
 
 if (-not $DllPath) {
     # Look next to the script first, then one level up (repo root → Release build)
     $candidates = @(
-        (Join-Path $ScriptDir "TreblleModule.dll"),
-        (Join-Path (Split-Path -Parent $ScriptDir) "x64\Release\TreblleModule.dll"),
-        (Join-Path (Split-Path -Parent $ScriptDir) "Release\TreblleModule.dll")
+        (Join-Path $ScriptDir "TreblleAgent.dll"),
+        (Join-Path (Split-Path -Parent $ScriptDir) "x64\Release\TreblleAgent.dll"),
+        (Join-Path (Split-Path -Parent $ScriptDir) "Release\TreblleAgent.dll")
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) { $DllPath = $c; break }
@@ -43,7 +43,7 @@ if (-not $DllPath) {
 }
 
 if (-not $DllPath -or -not (Test-Path $DllPath)) {
-    Write-Error "Cannot find TreblleModule.dll. Build the project first, then re-run this script."
+    Write-Error "Cannot find TreblleAgent.dll. Build the project first, then re-run this script."
     exit 1
 }
 
@@ -56,7 +56,7 @@ if (-not (Test-Path $appcmd)) {
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host "  Treblle IIS Module Installer" -ForegroundColor Cyan
+Write-Host "  Treblle IIS Agent Installer" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -67,7 +67,7 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 Copy-Item -Path $DllPath -Destination $DllDest -Force
-Write-Host "Copied TreblleModule.dll to $DllDest" -ForegroundColor Green
+Write-Host "Copied TreblleAgent.dll to $DllDest" -ForegroundColor Green
 
 # ── Create config if missing ──────────────────────────────────────────────────
 if (-not (Test-Path $ConfigDest)) {
@@ -137,18 +137,18 @@ Write-Host ""
 Write-Host "Registering module with IIS..." -ForegroundColor Cyan
 
 # Remove any previous registration first (idempotent)
-$existing = & $appcmd list module /name:TreblleModule 2>$null
+$existing = & $appcmd list module /name:TreblleAgent 2>$null
 if ($existing) {
-    & $appcmd delete module /name:TreblleModule | Out-Null
+    & $appcmd delete module /name:TreblleAgent | Out-Null
     Write-Host "  Removed previous registration." -ForegroundColor Gray
 }
 
-$result = & $appcmd add module /name:TreblleModule /image:"$DllDest" 2>&1
+$result = & $appcmd add module /name:TreblleAgent /image:"$DllDest" 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Error "appcmd failed to register the module: $result"
     exit 1
 }
-Write-Host "  Module registered successfully." -ForegroundColor Green
+Write-Host "  Agent registered successfully." -ForegroundColor Green
 
 # ── Restart IIS ───────────────────────────────────────────────────────────────
 Write-Host ""
@@ -166,7 +166,7 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Module DLL   : $DllDest"
+Write-Host "  Agent DLL    : $DllDest"
 Write-Host "  Config file  : $ConfigDest"
 Write-Host ""
 Write-Host "  To change settings, edit $ConfigDest" -ForegroundColor White

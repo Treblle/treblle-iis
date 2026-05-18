@@ -5,6 +5,8 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -17,7 +19,7 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build Release x64
-        run: msbuild TreblleModule.sln /p:Configuration=Release /p:Platform=x64 /m
+        run: msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64 /m
 
       - name: Configure unit tests
         run: cmake -S tests -B build/tests -G "Visual Studio 17 2022" -A x64
@@ -31,6 +33,12 @@ jobs:
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TreblleModule-${{ github.sha }}
-          path: x64/Release/TreblleModule.dll
+          name: TreblleAgent-${{ github.sha }}
+          path: x64/Release/TreblleAgent.dll
           retention-days: 30
+
+      - name: Upload DLL to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: x64/Release/TreblleAgent.dll

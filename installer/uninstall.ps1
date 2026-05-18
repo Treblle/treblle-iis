@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Uninstalls the Treblle IIS Native HTTP Module.
+    Uninstalls the Treblle IIS Agent.
 #>
 
 Set-StrictMode -Version Latest
@@ -12,18 +12,18 @@ $appcmd     = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host "  Treblle IIS Module Uninstaller" -ForegroundColor Cyan
+Write-Host "  Treblle IIS Agent Uninstaller" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # ── Remove module registration ────────────────────────────────────────────────
 if (Test-Path $appcmd) {
-    $existing = & $appcmd list module /name:TreblleModule 2>$null
+    $existing = & $appcmd list module /name:TreblleAgent 2>$null
     if ($existing) {
-        & $appcmd delete module /name:TreblleModule | Out-Null
-        Write-Host "Module unregistered from IIS." -ForegroundColor Green
+        & $appcmd delete module /name:TreblleAgent | Out-Null
+        Write-Host "Agent unregistered from IIS." -ForegroundColor Green
     } else {
-        Write-Host "Module was not registered in IIS." -ForegroundColor Yellow
+        Write-Host "Agent was not registered in IIS." -ForegroundColor Yellow
     }
 } else {
     Write-Host "appcmd.exe not found — skipping IIS module removal." -ForegroundColor Yellow
