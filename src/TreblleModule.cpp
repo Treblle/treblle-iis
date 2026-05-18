@@ -312,7 +312,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
         }
 
         auto cfg = Config::Instance().Get();
-        std::string payload = PayloadBuilder::Build(ctx_, *cfg, loadTimeMs, pCtx);
+        std::string payload = PayloadBuilder::Build(ctx_, *cfg, loadTimeMs, GetIISVersion(pCtx));
 
         if (g_pQueue) g_pQueue->Push(std::move(payload));
     } catch (...) {}
