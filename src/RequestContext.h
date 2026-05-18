@@ -6,6 +6,7 @@ struct RequestContext {
     bool responseHeadersDone   = false;
     bool requestBodyTruncated  = false;
     bool responseBodyTruncated = false;
+    bool debugMode             = false;
 
     LARGE_INTEGER startTime   = {};
     LARGE_INTEGER frequency   = {};
@@ -16,6 +17,8 @@ struct RequestContext {
     std::string clientIp;
     std::string userAgent;
     std::string protocol;
+    std::string internalId;
+    std::string internalName;
 
     std::string requestBody;
     std::string responseBody;

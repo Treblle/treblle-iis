@@ -1,10 +1,9 @@
 #include "precomp.h"
 #include "PayloadBuilder.h"
 #include "BodyCapture.h"
+#include "Constants.h"
 #include "Utils.h"
-
-static const char* kSdkName    = "iis-native";
-static const char* kSdkVersion = "1.0.0";
+#include "DataMasker.h"
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,16 +43,22 @@ std::string PayloadBuilder::BuildBodyField(const std::string& body, bool truncat
 std::string PayloadBuilder::Build(const RequestContext& ctx,
                                   const TreblleConfig&  cfg,
                                   double                loadTimeMs,
-                                  IHttpContext*          pCtx) {
+                                  const std::string&    iisVersion) {
     OsInfo      os  = GetOsInfo();
     std::string serverIp = GetServerIP();
-    std::string iisVer   = GetIISVersion(pCtx);
+    const std::string& iisVer = iisVersion;
 
-    // Format load_time with 3 decimal places
+    const std::vector<std::string>& kws = cfg.maskedKeywords;
+    auto reqHeaders  = ctx.requestHeaders;
+    auto respHeaders = ctx.responseHeaders;
+    MaskHeaders(reqHeaders,  kws);
+    MaskHeaders(respHeaders, kws);
+    const std::string reqBody  = MaskJson(ctx.requestBody,  kws);
+    const std::string respBody = MaskJson(ctx.responseBody, kws);
+
     char loadTimeBuf[32];
     snprintf(loadTimeBuf, sizeof(loadTimeBuf), "%.3f", loadTimeMs);
 
-    // Format response size
     char responseSizeBuf[32];
     snprintf(responseSizeBuf, sizeof(responseSizeBuf), "%lld", ctx.responseSize);
 
@@ -62,10 +67,12 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
 
     payload += "{";
 
-    // Top-level fields
-    payload += "\"api_key\":\"";   payload += JsonEscape(cfg.apiKey);    payload += "\",";
-    payload += "\"sdk_token\":\""; payload += JsonEscape(cfg.sdkToken);  payload += "\",";
-    payload += "\"version\":1.0,";
+    payload += "\"api_key\":\"";       payload += JsonEscape(cfg.apiKey);       payload += "\",";
+    payload += "\"sdk_token\":\"";     payload += JsonEscape(cfg.sdkToken);     payload += "\",";
+    payload += "\"sdk\":\"";           payload += TreblleConst::kSdkName;       payload += "\",";
+    payload += "\"version\":";         payload += std::to_string(TreblleConst::kApiVersion); payload += ",";
+    payload += "\"internal_id\":\"";   payload += JsonEscape(ctx.internalId);   payload += "\",";
+    payload += "\"internal_name\":\""; payload += JsonEscape(ctx.internalName); payload += "\",";
 
     // data object
     payload += "\"data\":{";
@@ -77,16 +84,16 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
     payload += "\"software\":\"";  payload += JsonEscape(iisVer);        payload += "\",";
     payload += "\"protocol\":\"";  payload += JsonEscape(ctx.protocol);  payload += "\",";
     payload += "\"os\":{";
-    payload += "\"name\":\"";      payload += JsonEscape(os.name);        payload += "\",";
-    payload += "\"release\":\"";   payload += JsonEscape(os.release);     payload += "\",";
+    payload += "\"name\":\"";      payload += JsonEscape(os.name);           payload += "\",";
+    payload += "\"release\":\"";   payload += JsonEscape(os.release);        payload += "\",";
     payload += "\"architecture\":\""; payload += JsonEscape(os.architecture); payload += "\"";
     payload += "}";  // os
     payload += "},"; // server
 
     // language
     payload += "\"language\":{";
-    payload += "\"name\":\"";    payload += kSdkName;    payload += "\",";
-    payload += "\"version\":\""; payload += kSdkVersion; payload += "\"";
+    payload += "\"name\":\"";    payload += TreblleConst::kSdkName;    payload += "\",";
+    payload += "\"version\":\""; payload += TreblleConst::kSdkVersion; payload += "\"";
     payload += "},"; // language
 
     // request
@@ -96,19 +103,19 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
     payload += "\"url\":\"";       payload += JsonEscape(ctx.url);              payload += "\",";
     payload += "\"user_agent\":\"";payload += JsonEscape(ctx.userAgent);        payload += "\",";
     payload += "\"method\":\"";    payload += JsonEscape(ctx.method);           payload += "\",";
-    payload += "\"headers\":";     payload += BuildHeadersObject(ctx.requestHeaders);  payload += ",";
-    payload += "\"body\":";        payload += BuildBodyField(ctx.requestBody, ctx.requestBodyTruncated); payload += ",";
+    payload += "\"headers\":";     payload += BuildHeadersObject(reqHeaders);   payload += ",";
+    payload += "\"body\":";        payload += BuildBodyField(reqBody, ctx.requestBodyTruncated); payload += ",";
     payload += "\"route_path\":\"";payload += JsonEscape(ctx.routePath);        payload += "\",";
     payload += "\"query\":";       payload += BuildQueryObject(ctx.queryParams);
     payload += "},"; // request
 
     // response
     payload += "\"response\":{";
-    payload += "\"headers\":";  payload += BuildHeadersObject(ctx.responseHeaders); payload += ",";
-    payload += "\"code\":";     payload += std::to_string(ctx.statusCode);           payload += ",";
-    payload += "\"size\":";     payload += responseSizeBuf;                          payload += ",";
-    payload += "\"load_time\":";payload += loadTimeBuf;                              payload += ",";
-    payload += "\"body\":";     payload += BuildBodyField(ctx.responseBody, ctx.responseBodyTruncated);
+    payload += "\"headers\":";  payload += BuildHeadersObject(respHeaders); payload += ",";
+    payload += "\"code\":";     payload += std::to_string(ctx.statusCode);  payload += ",";
+    payload += "\"size\":";     payload += responseSizeBuf;                 payload += ",";
+    payload += "\"load_time\":";payload += loadTimeBuf;                     payload += ",";
+    payload += "\"body\":";     payload += BuildBodyField(respBody, ctx.responseBodyTruncated);
     payload += "},"; // response
 
     // errors (always empty — native module has no access to app-level exceptions)

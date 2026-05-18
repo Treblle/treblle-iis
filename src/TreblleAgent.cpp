@@ -1,9 +1,10 @@
 #include "precomp.h"
-#include "TreblleModule.h"
+#include "TreblleAgent.h"
 #include "Config.h"
 #include "BodyCapture.h"
 #include "PayloadBuilder.h"
 #include "HttpSender.h"
+#include "Constants.h"
 #include "Utils.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
@@ -28,38 +29,32 @@ static DWORD WINAPI WorkerThreadProc(LPVOID) {
     HttpSender sender;
     while (true) {
         std::string payload;
-        if (!g_pQueue->Pop(payload, 1000)) {
-            if (g_pQueue->IsShutdown()) break;
-            continue;
-        }
-        TreblleConfig cfg = Config::Instance().Get();
-        sender.Send(payload, cfg.treblleUrl, cfg.sdkToken, cfg.debugMode);
+        // INFINITE: sleep until a payload arrives or Shutdown() fires the event
+        if (!g_pQueue->Pop(payload, INFINITE)) break;
+        auto cfg = Config::Instance().Get();
+        sender.Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
     }
-    // Drain remaining entries on shutdown
+    // Drain any payloads already in the queue before exiting
     std::string payload;
     while (g_pQueue->Pop(payload, 0)) {
-        TreblleConfig cfg = Config::Instance().Get();
-        HttpSender().Send(payload, cfg.treblleUrl, cfg.sdkToken, cfg.debugMode);
+        auto cfg = Config::Instance().Get();
+        HttpSender().Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
     }
     return 0;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-HRESULT CTreblleModuleFactory::GetHttpModule(OUT CHttpModule** ppModule,
+HRESULT CTreblleAgentFactory::GetHttpModule(OUT CHttpModule** ppModule,
                                               IN  IModuleAllocator*) {
-    *ppModule = new(std::nothrow) CTreblleModule();
+    *ppModule = new(std::nothrow) CTreblleAgent();
     return *ppModule ? S_OK : E_OUTOFMEMORY;
 }
 
-void CTreblleModuleFactory::Terminate() {
-    // Signal the background worker to drain remaining payloads and exit.
-    if (g_pQueue) {
-        g_pQueue->Shutdown();
-    }
+void CTreblleAgentFactory::Terminate() {
+    if (g_pQueue) g_pQueue->Shutdown();
     if (g_hWorkerThread) {
-        // Give the worker up to 5 seconds to send any queued payloads.
-        WaitForSingleObject(g_hWorkerThread, 5000);
+        WaitForSingleObject(g_hWorkerThread, TreblleConst::kShutdownDrainMs);
         CloseHandle(g_hWorkerThread);
         g_hWorkerThread = nullptr;
     }
@@ -73,25 +68,58 @@ void CTreblleModuleFactory::Terminate() {
 HRESULT __stdcall RegisterModule(DWORD,
                                   IHttpModuleRegistrationInfo* pInfo,
                                   IHttpServer*) {
-    // Locate and load treblle.config from the same directory as this DLL
     WCHAR dllPath[MAX_PATH] = {};
     GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
-    Config::Instance().Load(dllPath);
 
-    // Start the background sender thread
+    bool loaded = Config::Instance().Load(dllPath);
+    auto cfg    = Config::Instance().Get();
+    bool dbg    = cfg->debugMode;
+
+    char narrowPath[MAX_PATH] = {};
+    WideCharToMultiByte(CP_UTF8, 0, dllPath, -1, narrowPath, MAX_PATH, nullptr, nullptr);
+    LogDebug(std::string("RegisterModule — DLL path: ") + narrowPath, dbg);
+    LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"), dbg);
+    LogDebug("Excluded routes count: " + std::to_string(cfg->excludeRoutes.size()), dbg);
+
     g_pQueue = new(std::nothrow) AsyncQueue();
     if (!g_pQueue) return E_OUTOFMEMORY;
     g_hWorkerThread = CreateThread(nullptr, 0, WorkerThreadProc, nullptr, 0, nullptr);
 
-    return pInfo->SetRequestNotifications(
-        new(std::nothrow) CTreblleModuleFactory(),
+    HRESULT hr = pInfo->SetRequestNotifications(
+        new(std::nothrow) CTreblleAgentFactory(),
         RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
         0);
+
+    LogDebug(std::string("SetRequestNotifications hr=") + std::to_string(hr), dbg);
+    return hr;
+}
+
+// ── Header collection helper ──────────────────────────────────────────────────
+
+struct HeaderEntry { int id; const char* name; };
+
+template<typename THeaders>
+static void FillHeaderMap(const THeaders&                     hdrs,
+                          std::map<std::string, std::string>& out,
+                          const HeaderEntry*                  known,
+                          size_t                              count) {
+    for (size_t i = 0; i < count; ++i) {
+        PCSTR  val = hdrs.KnownHeaders[known[i].id].pRawValue;
+        USHORT len = hdrs.KnownHeaders[known[i].id].RawValueLength;
+        if (val && len > 0)
+            out[known[i].name] = std::string(val, len);
+    }
+    for (USHORT i = 0; i < hdrs.UnknownHeaderCount; ++i) {
+        const HTTP_UNKNOWN_HEADER& uh = hdrs.pUnknownHeaders[i];
+        if (uh.pName && uh.NameLength > 0 && uh.pRawValue && uh.RawValueLength > 0)
+            out[ToLower(std::string(uh.pName, uh.NameLength))] =
+                std::string(uh.pRawValue, uh.RawValueLength);
+    }
 }
 
 // ── Helper methods ────────────────────────────────────────────────────────────
 
-std::string CTreblleModule::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHORT unknownLen) {
+std::string CTreblleAgent::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHORT unknownLen) {
     switch (verb) {
         case HttpVerbGET:     return "GET";
         case HttpVerbPOST:    return "POST";
@@ -107,7 +135,7 @@ std::string CTreblleModule::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHO
     }
 }
 
-bool CTreblleModule::IsTrackedMethod(const std::string& method) {
+bool CTreblleAgent::IsTrackedMethod(const std::string& method) {
     static const char* kTracked[] = {
         "GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"
     };
@@ -116,38 +144,27 @@ bool CTreblleModule::IsTrackedMethod(const std::string& method) {
     return false;
 }
 
-void CTreblleModule::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
-    static const struct { HttpHeaderId id; const char* name; } kKnown[] = {
-        { HttpHeaderHost,            "host" },
-        { HttpHeaderContentType,     "content-type" },
-        { HttpHeaderContentLength,   "content-length" },
-        { HttpHeaderAccept,          "accept" },
-        { HttpHeaderAcceptEncoding,  "accept-encoding" },
-        { HttpHeaderAcceptLanguage,  "accept-language" },
-        { HttpHeaderAuthorization,   "authorization" },
-        { HttpHeaderUserAgent,       "user-agent" },
-        { HttpHeaderReferer,         "referer" },
-        { HttpHeaderCacheControl,    "cache-control" },
-        { HttpHeaderConnection,      "connection" },
-        { HttpHeaderCookie,          "cookie" },
-        { HttpHeaderTransferEncoding,"transfer-encoding" },
+void CTreblleAgent::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
+    static const HeaderEntry kKnown[] = {
+        { HttpHeaderHost,             "host" },
+        { HttpHeaderContentType,      "content-type" },
+        { HttpHeaderContentLength,    "content-length" },
+        { HttpHeaderAccept,           "accept" },
+        { HttpHeaderAcceptEncoding,   "accept-encoding" },
+        { HttpHeaderAcceptLanguage,   "accept-language" },
+        { HttpHeaderAuthorization,    "authorization" },
+        { HttpHeaderUserAgent,        "user-agent" },
+        { HttpHeaderReferer,          "referer" },
+        { HttpHeaderCacheControl,     "cache-control" },
+        { HttpHeaderConnection,       "connection" },
+        { HttpHeaderCookie,           "cookie" },
+        { HttpHeaderTransferEncoding, "transfer-encoding" },
     };
-    for (const auto& h : kKnown) {
-        PCSTR  val = pRaw->Headers.KnownHeaders[h.id].pRawValue;
-        USHORT len = pRaw->Headers.KnownHeaders[h.id].RawValueLength;
-        if (val && len > 0)
-            ctx_.requestHeaders[h.name] = std::string(val, len);
-    }
-    for (USHORT i = 0; i < pRaw->Headers.UnknownHeaderCount; ++i) {
-        const HTTP_UNKNOWN_HEADER& uh = pRaw->Headers.pUnknownHeaders[i];
-        if (uh.pName && uh.NameLength > 0 && uh.pRawValue && uh.RawValueLength > 0)
-            ctx_.requestHeaders[ToLower(std::string(uh.pName, uh.NameLength))] =
-                std::string(uh.pRawValue, uh.RawValueLength);
-    }
+    FillHeaderMap(pRaw->Headers, ctx_.requestHeaders, kKnown, ARRAYSIZE(kKnown));
 }
 
-void CTreblleModule::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
-    static const struct { int id; const char* name; } kKnown[] = {
+void CTreblleAgent::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
+    static const HeaderEntry kKnown[] = {
         { HttpHeaderContentType,      "content-type" },
         { HttpHeaderContentLength,    "content-length" },
         { HttpHeaderCacheControl,     "cache-control" },
@@ -157,70 +174,64 @@ void CTreblleModule::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
         { HttpHeaderEtag,             "etag" },
         { HttpHeaderLocation,         "location" },
     };
-    for (const auto& h : kKnown) {
-        PCSTR  val = pRaw->Headers.KnownHeaders[h.id].pRawValue;
-        USHORT len = pRaw->Headers.KnownHeaders[h.id].RawValueLength;
-        if (val && len > 0)
-            ctx_.responseHeaders[h.name] = std::string(val, len);
-    }
-    for (USHORT i = 0; i < pRaw->Headers.UnknownHeaderCount; ++i) {
-        const HTTP_UNKNOWN_HEADER& uh = pRaw->Headers.pUnknownHeaders[i];
-        if (uh.pName && uh.NameLength > 0 && uh.pRawValue && uh.RawValueLength > 0)
-            ctx_.responseHeaders[ToLower(std::string(uh.pName, uh.NameLength))] =
-                std::string(uh.pRawValue, uh.RawValueLength);
-    }
+    FillHeaderMap(pRaw->Headers, ctx_.responseHeaders, kKnown, ARRAYSIZE(kKnown));
 }
 
-std::string CTreblleModule::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
-    // Determine scheme
-    bool isSecure = false;
-    IHttpConnection* pConn = pCtx->GetConnection();
-    if (pConn) isSecure = pConn->IsSecureConnection() != FALSE;
+std::string CTreblleAgent::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
+    DWORD  cbHttps = 0;
+    PCSTR  pHttps  = nullptr;
+    bool isSecure  = SUCCEEDED(pCtx->GetServerVariable("HTTPS", &pHttps, &cbHttps))
+                     && pHttps && cbHttps > 0
+                     && _strnicmp(pHttps, "on", 2) == 0;
     std::string scheme = isSecure ? "https" : "http";
 
-    // Host
     PCSTR pHost = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
     std::string host = pHost ? pHost : "";
 
-    // Raw URL (path + query)
     std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
-
     return scheme + "://" + host + rawUrl;
 }
 
 // ── OnBeginRequest ────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
-    __try {
+    try {
         Config::Instance().CheckReload();
-        TreblleConfig cfg = Config::Instance().Get();
-        if (!cfg.loaded || cfg.includeRoutes.empty()) return RQ_NOTIFICATION_CONTINUE;
+        auto cfg = Config::Instance().Get();
+
+        if (!cfg->loaded) return RQ_NOTIFICATION_CONTINUE;
+        bool dbg = cfg->debugMode;
+        ctx_.debugMode = dbg;
 
         IHttpRequest* pReq = pCtx->GetRequest();
         HTTP_REQUEST* pRaw = pReq->GetRawHttpRequest();
         if (!pRaw) return RQ_NOTIFICATION_CONTINUE;
 
-        // Extract host (lowercase, strip port)
         PCSTR pHostRaw = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
         std::string host = pHostRaw ? ToLower(pHostRaw) : "";
         size_t colon = host.rfind(':');
         if (colon != std::string::npos) host = host.substr(0, colon);
 
-        // Extract URL path (no query string)
         std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
         std::string path   = ParseQueryPath(rawUrl);
 
-        // Route match check
-        if (!Config::Instance().Matches(host, path)) return RQ_NOTIFICATION_CONTINUE;
+        if (Config::Instance().IsExcluded(host, path)) {
+            LogDebug("skip host=" + host + " url=" + path + " — matched exclude_routes", dbg);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
 
-        // Method check
+        ctx_.internalId   = ComputeHostId(host);
+        ctx_.internalName = host;
+
         std::string method = GetMethodString(pRaw->Verb,
                                               pRaw->pUnknownVerb,
                                               pRaw->UnknownVerbLength);
-        if (!IsTrackedMethod(method)) return RQ_NOTIFICATION_CONTINUE;
+        if (!IsTrackedMethod(method)) {
+            LogDebug("skip host=" + host + " url=" + path + " — method " + method + " not tracked", dbg);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
 
-        // Passed all checks — mark for tracking
         ctx_.shouldTrack = true;
         QueryPerformanceFrequency(&ctx_.frequency);
         QueryPerformanceCounter(&ctx_.startTime);
@@ -231,64 +242,66 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         ctx_.clientIp  = GetClientIP(pCtx);
         ctx_.queryParams = ParseQueryString(rawUrl);
 
-        // Determine protocol
         ctx_.protocol = (pRaw->Version.MajorVersion == 2) ? "HTTP/2" : "HTTP/1.1";
 
-        // Collect request headers
         CollectRequestHeaders(pRaw);
         auto ua = ctx_.requestHeaders.find("user-agent");
         ctx_.userAgent = (ua != ctx_.requestHeaders.end()) ? ua->second : "";
 
-        // Request body — only for JSON content types
         PCSTR pCT = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
-        bool hasJsonBody = pCT && ToLower(pCT).find("application/json") != std::string::npos;
-        if (hasJsonBody) {
+        std::string ct = pCT ? ToLower(pCT) : "";
+
+        if (ct.find("application/json") != std::string::npos) {
             ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
+        } else if (ct.find("multipart/form-data") != std::string::npos) {
+            PCSTR pCL = pRaw->Headers.KnownHeaders[HttpHeaderContentLength].pRawValue;
+            LONGLONG cl = pCL ? _atoi64(pCL) : 0;
+            ctx_.requestBody = SummarizeMultipartBody(pCtx, pCT, cl);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
 
 // ── OnSendResponse ────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
     IHttpContext* pCtx, ISendResponseProvider*) {
     if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
-    __try {
+    try {
         IHttpResponse* pResp = pCtx->GetResponse();
         HTTP_RESPONSE* pRaw  = pResp->GetRawHttpResponse();
         if (!pRaw) return RQ_NOTIFICATION_CONTINUE;
 
-        // On first call: check response Content-Type and collect response headers
         if (!ctx_.responseHeadersDone) {
             PCSTR pCT  = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
-            bool isJson = pCT && ToLower(pCT).find("application/json") != std::string::npos;
+            std::string ct = pCT ? ToLower(pCT) : "";
+            bool isJson = ct.find("application/json") != std::string::npos;
             if (!isJson) {
-                ctx_.shouldTrack = false; // not a JSON API response — stop tracking
+                LogDebug("skip host=" + ctx_.internalName + " url=" + ctx_.routePath
+                    + " — response Content-Type \"" + ct + "\" is not JSON", ctx_.debugMode);
+                ctx_.shouldTrack = false;
                 return RQ_NOTIFICATION_CONTINUE;
             }
             USHORT status = 0;
-            PCSTR  reason = nullptr;
-            pResp->GetStatus(&status, &reason);
+            pResp->GetStatus(&status);
             ctx_.statusCode = status;
             CollectResponseHeaders(pRaw);
             ctx_.responseHeadersDone = true;
         }
 
-        // Accumulate body chunks (may be called multiple times for chunked responses)
         CaptureResponseChunks(pRaw, ctx_.responseBody, ctx_.responseSize, ctx_.responseBodyTruncated);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
 
 // ── OnEndRequest ──────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnEndRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
-    if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
-    __try {
+    if (!ctx_.shouldTrack || !ctx_.responseHeadersDone) return RQ_NOTIFICATION_CONTINUE;
+    try {
         LARGE_INTEGER endTime;
         QueryPerformanceCounter(&endTime);
 
@@ -298,11 +311,11 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
                          / static_cast<double>(ctx_.frequency.QuadPart) * 1000.0;
         }
 
-        TreblleConfig cfg = Config::Instance().Get();
-        std::string payload = PayloadBuilder::Build(ctx_, cfg, loadTimeMs, pCtx);
+        auto cfg = Config::Instance().Get();
+        std::string payload = PayloadBuilder::Build(ctx_, *cfg, loadTimeMs, GetIISVersion(pCtx));
 
         if (g_pQueue) g_pQueue->Push(std::move(payload));
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } catch (...) {}
 
     return RQ_NOTIFICATION_CONTINUE;
 }
