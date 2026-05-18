@@ -24,14 +24,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Resolve paths ─────────────────────────────────────────────────────────────
+# --- Resolve paths -----------------------------------------------------------
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallDir  = "C:\iismodules\treblle"
 $DllDest     = Join-Path $InstallDir "TreblleModule.dll"
 $ConfigDest  = if ($ConfigPath) { $ConfigPath } else { Join-Path $InstallDir "treblle.config" }
 
 if (-not $DllPath) {
-    # Look next to the script first, then one level up (repo root → Release build)
     $candidates = @(
         (Join-Path $ScriptDir "TreblleModule.dll"),
         (Join-Path (Split-Path -Parent $ScriptDir) "x64\Release\TreblleModule.dll"),
@@ -47,7 +46,7 @@ if (-not $DllPath -or -not (Test-Path $DllPath)) {
     exit 1
 }
 
-# ── Check IIS ─────────────────────────────────────────────────────────────────
+# --- Check IIS ---------------------------------------------------------------
 $appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
 if (-not (Test-Path $appcmd)) {
     Write-Error "IIS does not appear to be installed (appcmd.exe not found). Install IIS first."
@@ -60,7 +59,7 @@ Write-Host "  Treblle IIS Module Installer" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Copy DLL ──────────────────────────────────────────────────────────────────
+# --- Copy DLL ----------------------------------------------------------------
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
     Write-Host "Created $InstallDir" -ForegroundColor Green
@@ -69,11 +68,11 @@ if (-not (Test-Path $InstallDir)) {
 Copy-Item -Path $DllPath -Destination $DllDest -Force
 Write-Host "Copied TreblleModule.dll to $DllDest" -ForegroundColor Green
 
-# ── Create config if missing ──────────────────────────────────────────────────
+# --- Create config if missing ------------------------------------------------
 if (-not (Test-Path $ConfigDest)) {
     Write-Host ""
     Write-Host "No treblle.config found. Let's set it up now." -ForegroundColor Yellow
-    Write-Host "(You can edit $ConfigDest at any time — changes take effect immediately.)"
+    Write-Host "(You can edit $ConfigDest at any time - changes take effect immediately.)"
     Write-Host ""
 
     $apiKey   = Read-Host "  Enter your Treblle API Key"
@@ -90,7 +89,6 @@ if (-not (Test-Path $ConfigDest)) {
         $entry = Read-Host "  Route (or Enter to finish)"
         if ([string]::IsNullOrWhiteSpace($entry)) { break }
 
-        # Parse host and optional path
         if ($entry -match '^([^/]+)(/.*)$') {
             $routes += @{ host = $matches[1].Trim(); path = $matches[2].Trim() }
         } else {
@@ -101,10 +99,9 @@ if (-not (Test-Path $ConfigDest)) {
     if ($routes.Count -eq 0) {
         Write-Host ""
         Write-Host "  Warning: No routes configured. The module will not track anything until" -ForegroundColor Yellow
-        Write-Host "  include_routes is populated in $ConfigDest" -ForegroundColor Yellow
+        Write-Host "  exclude_routes is populated in $ConfigDest" -ForegroundColor Yellow
     }
 
-    # Build routes JSON
     $routeJson = ($routes | ForEach-Object {
         $h = $_.host
         if ($_.ContainsKey("path") -and $_.path) {
@@ -120,7 +117,7 @@ if (-not (Test-Path $ConfigDest)) {
   "sdk_token": "$sdkToken",
   "treblle_url": "https://ingress.treblle.com",
   "debug": false,
-  "include_routes": [
+  "exclude_routes": [
 $routeJson
   ]
 }
@@ -129,14 +126,13 @@ $routeJson
     Write-Host ""
     Write-Host "Config written to $ConfigDest" -ForegroundColor Green
 } else {
-    Write-Host "Existing config found at $ConfigDest — leaving it unchanged." -ForegroundColor Green
+    Write-Host "Existing config found at $ConfigDest - leaving it unchanged." -ForegroundColor Green
 }
 
-# ── Register module in IIS ────────────────────────────────────────────────────
+# --- Register module in IIS --------------------------------------------------
 Write-Host ""
 Write-Host "Registering module with IIS..." -ForegroundColor Cyan
 
-# Remove any previous registration first (idempotent)
 $existing = & $appcmd list module /name:TreblleModule 2>$null
 if ($existing) {
     & $appcmd delete module /name:TreblleModule | Out-Null
@@ -150,7 +146,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Module registered successfully." -ForegroundColor Green
 
-# ── Restart IIS ───────────────────────────────────────────────────────────────
+# --- Restart IIS -------------------------------------------------------------
 Write-Host ""
 Write-Host "Restarting IIS..." -ForegroundColor Cyan
 iisreset /noforce 2>&1 | Out-Null
@@ -160,7 +156,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  IIS restarted." -ForegroundColor Green
 }
 
-# ── Done ──────────────────────────────────────────────────────────────────────
+# --- Done --------------------------------------------------------------------
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "  Installation complete!" -ForegroundColor Green
@@ -170,5 +166,5 @@ Write-Host "  Module DLL   : $DllDest"
 Write-Host "  Config file  : $ConfigDest"
 Write-Host ""
 Write-Host "  To change settings, edit $ConfigDest" -ForegroundColor White
-Write-Host "  Changes take effect immediately — no restart needed." -ForegroundColor White
+Write-Host "  Changes take effect immediately - no restart needed." -ForegroundColor White
 Write-Host ""

@@ -16,7 +16,7 @@ Write-Host "  Treblle IIS Module Uninstaller" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Remove module registration ────────────────────────────────────────────────
+# --- Remove module registration ----------------------------------------------
 if (Test-Path $appcmd) {
     $existing = & $appcmd list module /name:TreblleModule 2>$null
     if ($existing) {
@@ -26,14 +26,14 @@ if (Test-Path $appcmd) {
         Write-Host "Module was not registered in IIS." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "appcmd.exe not found — skipping IIS module removal." -ForegroundColor Yellow
+    Write-Host "appcmd.exe not found - skipping IIS module removal." -ForegroundColor Yellow
 }
 
-# ── Restart IIS ───────────────────────────────────────────────────────────────
+# --- Restart IIS -------------------------------------------------------------
 Write-Host "Restarting IIS..." -ForegroundColor Cyan
 iisreset /noforce 2>&1 | Out-Null
 
-# ── Remove files ──────────────────────────────────────────────────────────────
+# --- Remove files ------------------------------------------------------------
 if (Test-Path $InstallDir) {
     $answer = Read-Host "`nRemove $InstallDir (including treblle.config)? [y/N]"
     if ($answer -match '^[Yy]') {
