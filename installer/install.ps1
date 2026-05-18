@@ -79,14 +79,16 @@ if (-not (Test-Path $ConfigDest)) {
     $sdkToken = Read-Host "  Enter your Treblle SDK Token"
 
     Write-Host ""
-    Write-Host "  Add API routes to monitor. Press Enter with no input when done."
+    Write-Host "  All JSON API traffic is monitored by default."
+    Write-Host "  Optionally exclude hosts or paths (e.g. health checks, internal endpoints)."
+    Write-Host "  Press Enter with no input when done."
     Write-Host "  Format: hostname[:port][/path]"
-    Write-Host "  Examples: api.example.com  |  api.example.com/v1  |  service.example.com/api"
+    Write-Host "  Examples: internal.example.com  |  api.example.com/health  |  api.example.com/metrics"
     Write-Host ""
 
     $routes = @()
     while ($true) {
-        $entry = Read-Host "  Route (or Enter to finish)"
+        $entry = Read-Host "  Exclude route (or Enter to skip)"
         if ([string]::IsNullOrWhiteSpace($entry)) { break }
 
         if ($entry -match '^([^/]+)(/.*)$') {
@@ -98,8 +100,7 @@ if (-not (Test-Path $ConfigDest)) {
 
     if ($routes.Count -eq 0) {
         Write-Host ""
-        Write-Host "  Warning: No routes configured. The module will not track anything until" -ForegroundColor Yellow
-        Write-Host "  exclude_routes is populated in $ConfigDest" -ForegroundColor Yellow
+        Write-Host "  No exclusions configured - all JSON API traffic will be monitored." -ForegroundColor Gray
     }
 
     $routeJson = ($routes | ForEach-Object {
