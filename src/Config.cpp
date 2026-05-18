@@ -33,16 +33,12 @@ TreblleConfig Config::Get() const {
     return config_;
 }
 
-bool Config::MatchRoute(const std::string& host, const std::string& urlPath,
-                        std::string& outInternalId, std::string& outInternalName) const {
+bool Config::IsExcluded(const std::string& host, const std::string& urlPath) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& route : config_.includeRoutes) {
+    for (const auto& route : config_.excludeRoutes) {
         if (!_stricmp(route.host.c_str(), host.c_str())) {
-            if (route.path.empty() || StartsWithCI(urlPath, route.path)) {
-                outInternalId   = route.internalId;
-                outInternalName = route.internalName;
+            if (route.path.empty() || StartsWithCI(urlPath, route.path))
                 return true;
-            }
         }
     }
     return false;
@@ -126,34 +122,14 @@ bool FindBool(const std::string& json, const std::string& key, bool defaultVal =
     return defaultVal;
 }
 
-// Derive a stable UUID-style internal ID from an input string using FNV-1a (no dependencies).
-static std::string ComputeInternalId(const std::string& input, const std::string& /*unused*/) {
-    auto fnv1a = [](const std::string& s, uint64_t seed) -> uint64_t {
-        uint64_t h = seed;
-        for (unsigned char c : s) { h ^= c; h *= 1099511628211ULL; }
-        return h;
-    };
-    uint64_t hi = fnv1a("treblle:" + input, 14695981039346656037ULL);
-    uint64_t lo = fnv1a("route:"   + input, 14695981039346656037ULL);
-    char buf[37];
-    snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%04x%08x",
-        (uint32_t)(hi >> 32),
-        (uint16_t)(hi >> 16),
-        (uint16_t)(hi & 0xFFFF),
-        (uint16_t)(lo >> 48),
-        (uint16_t)(lo >> 32),
-        (uint32_t)(lo & 0xFFFFFFFF));
-    return buf;
-}
-
-// Parse include_routes array — list of {"host":"...", "path":"..."} objects.
-std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
+// Parse exclude_routes array — list of {"host":"...", "path":"..."} objects.
+std::vector<RouteFilter> ParseExcludeRoutes(const std::string& json) {
     std::vector<RouteFilter> routes;
 
-    size_t arrKey = json.find("\"include_routes\"");
+    size_t arrKey = json.find("\"exclude_routes\"");
     if (arrKey == std::string::npos) return routes;
 
-    size_t pos = SkipWS(json, arrKey + strlen("\"include_routes\""));
+    size_t pos = SkipWS(json, arrKey + strlen("\"exclude_routes\""));
     if (pos >= json.size() || json[pos] != ':') return routes;
     pos = SkipWS(json, pos + 1);
     if (pos >= json.size() || json[pos] != '[') return routes;
@@ -164,7 +140,6 @@ std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
         if (pos >= json.size() || json[pos] == ']') break;
         if (json[pos] != '{') { ++pos; continue; }
 
-        // Find matching '}'
         size_t objEnd = json.find('}', pos);
         if (objEnd == std::string::npos) break;
         std::string obj = json.substr(pos, objEnd - pos + 1);
@@ -172,18 +147,10 @@ std::vector<RouteFilter> ParseIncludeRoutes(const std::string& json) {
         RouteFilter rf;
         rf.host = ToLower(FindString(obj, "host"));
         rf.path = FindString(obj, "path");
-        // Ensure path starts with '/' if non-empty
         if (!rf.path.empty() && rf.path[0] != '/') rf.path = "/" + rf.path;
 
-        if (!rf.host.empty()) {
-            std::string name = FindString(obj, "name");
-            rf.internalName = name.empty()
-                ? (rf.path.empty() ? rf.host : rf.host + rf.path)
-                : name;
-            // Include the name in the hash so projects with the same host+path stay distinct
-            rf.internalId = ComputeInternalId(rf.host + rf.path + rf.internalName, "");
+        if (!rf.host.empty())
             routes.push_back(std::move(rf));
-        }
 
         pos = objEnd + 1;
         pos = SkipWS(json, pos);
@@ -204,7 +171,7 @@ bool Config::LoadFromFile() {
     newCfg.sdkToken      = FindString(json, "sdk_token");
     newCfg.apiKey        = FindString(json, "api_key");
     newCfg.debugMode     = FindBool(json, "debug", false);
-    newCfg.includeRoutes = ParseIncludeRoutes(json);
+    newCfg.excludeRoutes = ParseExcludeRoutes(json);
     newCfg.loaded        = true;
 
     std::string url = FindString(json, "treblle_url");

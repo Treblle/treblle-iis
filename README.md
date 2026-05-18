@@ -60,7 +60,7 @@ cd path\to\treblle-iis\installer
 
 The installer will:
 - Copy `TreblleModule.dll` to `C:\iismodules\treblle\`
-- Prompt you for your **API Key**, **SDK Token**, and API route patterns
+- Prompt you for your **API Key**, **SDK Token**, and optional exclusion patterns
 - Write `C:\iismodules\treblle\treblle.config`
 - Register the module globally in IIS
 - Restart IIS
@@ -89,10 +89,10 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
   "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
   "treblle_url": "https://ingress.treblle.com",
   "debug": false,
-  "include_routes": [
-    { "host": "api-1.yourdomain.com" },
-    { "host": "api.yourdomain.com", "path": "/v2" },
-    { "host": "service.yourdomain.com", "path": "/api" }
+  "exclude_routes": [
+    { "host": "internal.yourdomain.com" },
+    { "host": "api.yourdomain.com", "path": "/health" },
+    { "host": "api.yourdomain.com", "path": "/metrics" }
   ]
 }
 ```
@@ -105,44 +105,47 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
 | `sdk_token` | string | — | **Required.** Your Treblle SDK token. |
 | `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support. |
 | `debug` | bool | `false` | When `true`, errors are written to the Windows Application Event Log (source: `Treblle`). Leave `false` in production. |
-| `include_routes` | array | `[]` | List of route objects to monitor. **Empty = monitor nothing.** |
+| `exclude_routes` | array | `[]` | List of route objects to exclude from monitoring. **Empty = monitor all JSON API traffic.** |
 
-Each object in `include_routes`:
+Each object in `exclude_routes`:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host` | string | Yes | Hostname to match (case-insensitive). Must match the HTTP `Host` header, excluding port. |
-| `path` | string | No | URL path prefix to match (case-insensitive). If omitted, all paths on the host are monitored. |
+| `host` | string | Yes | Hostname to exclude (case-insensitive). Must match the HTTP `Host` header, excluding port. |
+| `path` | string | No | URL path prefix to exclude (case-insensitive). If omitted, the entire host is excluded. |
 
 ---
 
-## include_routes explained
+## exclude_routes explained
 
-The module monitors **nothing by default**. You opt in by listing exactly which hosts and paths contain your APIs.
+The module monitors **all JSON API traffic by default**. Use `exclude_routes` to opt specific hosts or paths out.
 
-A request is tracked when:
-- Its `Host` header matches a route's `host` field, **and**
-- Its URL path starts with the route's `path` prefix (if specified)
-- **Both** request and response `Content-Type` contain `application/json`
+A request is tracked unless:
+- Its `Host` header matches an entry's `host` field, **and**
+- Its URL path starts with the entry's `path` prefix (if specified)
+
+All non-JSON responses (HTML, CSS, JS, images) are automatically ignored — no configuration needed for those.
+
+A request is tracked only when:
+- The response `Content-Type` contains `application/json`
 - The HTTP method is one of: `GET POST PUT PATCH DELETE HEAD OPTIONS`
+- It does not match any `exclude_routes` entry
 
 **Common scenarios:**
 
 ```json
-// Entire host is an API
-{ "host": "api.yourdomain.com" }
+// Exclude an entire internal host
+{ "host": "internal.yourdomain.com" }
 
-// One site, multiple API versions
-{ "host": "api.yourdomain.com", "path": "/v1" },
-{ "host": "api.yourdomain.com", "path": "/v2" }
+// Exclude health/metrics endpoints on a specific host
+{ "host": "api.yourdomain.com", "path": "/health" },
+{ "host": "api.yourdomain.com", "path": "/metrics" }
 
-// Multiple services on the same server
-{ "host": "api-1.yourdomain.com" },
-{ "host": "api.yourdomain.com",     "path": "/api2" },
-{ "host": "service3.yourdomain.com","path": "/v1"   }
+// Exclude a legacy API version
+{ "host": "api.yourdomain.com", "path": "/v1" }
 ```
 
-Anything not matching an `include_routes` entry (HTML pages, CSS, JS, images, non-JSON responses) is ignored entirely and produces no overhead.
+If `exclude_routes` is omitted or empty, all JSON API traffic across all hosts is monitored.
 
 ---
 
@@ -178,7 +181,7 @@ IIS Worker Process (w3wp.exe)
 
 The module's work on the hot path is minimal:
 - Config check: one `GetFileAttributesEx` call + mutex read (sub-microsecond)
-- Route matching: O(n) string comparison over `include_routes` entries
+- Exclusion check: O(n) string comparison over `exclude_routes` entries (skipped entirely when list is empty)
 - Body reading (request): buffered synchronous read + re-insert for downstream
 - Body reading (response): direct memory access to already-buffered chunks
 - JSON serialisation and network send happen entirely off the IIS thread
@@ -242,8 +245,8 @@ Common log entries:
 
 **Module is registered but no data appears in Treblle**
 
-1. Check that your `include_routes` entries match the actual hostname and path of your requests
-2. Confirm the API returns `Content-Type: application/json` in the response
+1. Confirm the API returns `Content-Type: application/json` in the response
+2. Check that the host/path is not matched by an `exclude_routes` entry
 3. Enable `debug: true` and check the Application Event Log
 4. Verify network access from the server to `ingress.treblle.com:443`
 

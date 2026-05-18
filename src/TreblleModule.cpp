@@ -88,7 +88,7 @@ HRESULT __stdcall RegisterModule(DWORD,
     LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"));
 
     TreblleConfig cfg = Config::Instance().Get();
-    LogDebug("Routes count: " + std::to_string(cfg.includeRoutes.size()));
+    LogDebug("Excluded routes count: " + std::to_string(cfg.excludeRoutes.size()));
 
     // Start the background sender thread
     g_pQueue = new(std::nothrow) AsyncQueue();
@@ -214,9 +214,9 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         TreblleConfig cfg = Config::Instance().Get();
 
         LogDebug("OnBeginRequest fired. loaded=" + std::string(cfg.loaded ? "true" : "false")
-            + " routes=" + std::to_string(cfg.includeRoutes.size()));
+            + " excluded=" + std::to_string(cfg.excludeRoutes.size()));
 
-        if (!cfg.loaded || cfg.includeRoutes.empty()) return RQ_NOTIFICATION_CONTINUE;
+        if (!cfg.loaded) return RQ_NOTIFICATION_CONTINUE;
 
         IHttpRequest* pReq2 = pCtx->GetRequest();
         HTTP_REQUEST* pRaw2 = pReq2->GetRawHttpRequest();
@@ -241,18 +241,24 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
         std::string path   = ParseQueryPath(rawUrl);
 
-        // Route match — captures internal ID and name for autodiscovery
-        std::string internalId, internalName;
-        if (!Config::Instance().MatchRoute(host, path, internalId, internalName))
+        // Exclusion check — skip hosts/paths the user opted out of
+        if (Config::Instance().IsExcluded(host, path)) {
+            LogDebug("skip host=" + host + " url=" + path + " — matched exclude_routes");
             return RQ_NOTIFICATION_CONTINUE;
-        ctx_.internalId   = internalId;
-        ctx_.internalName = internalName;
+        }
+
+        // Stable identity derived from host
+        ctx_.internalId   = ComputeHostId(host);
+        ctx_.internalName = host;
 
         // Method check
         std::string method = GetMethodString(pRaw->Verb,
                                               pRaw->pUnknownVerb,
                                               pRaw->UnknownVerbLength);
-        if (!IsTrackedMethod(method)) return RQ_NOTIFICATION_CONTINUE;
+        if (!IsTrackedMethod(method)) {
+            LogDebug("skip host=" + host + " url=" + path + " — method " + method + " not tracked");
+            return RQ_NOTIFICATION_CONTINUE;
+        }
 
         // Passed all checks — mark for tracking
         ctx_.shouldTrack = true;
@@ -297,9 +303,12 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
         // On first call: check response Content-Type and collect response headers
         if (!ctx_.responseHeadersDone) {
             PCSTR pCT  = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
-            bool isJson = pCT && ToLower(pCT).find("application/json") != std::string::npos;
+            std::string ct = pCT ? ToLower(pCT) : "";
+            bool isJson = ct.find("application/json") != std::string::npos;
             if (!isJson) {
-                ctx_.shouldTrack = false; // not a JSON API response — stop tracking
+                LogDebug("skip host=" + ctx_.internalName + " url=" + ctx_.routePath
+                    + " — response Content-Type \"" + ct + "\" is not JSON");
+                ctx_.shouldTrack = false;
                 return RQ_NOTIFICATION_CONTINUE;
             }
             USHORT status = 0;

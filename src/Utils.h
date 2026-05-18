@@ -20,3 +20,4 @@ OsInfo       GetOsInfo();
 std::string  GetIISVersion(IHttpContext* pCtx);
 
 void         LogDebug(const std::string& msg);
+std::string  ComputeHostId(const std::string& host);

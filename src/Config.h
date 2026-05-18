@@ -2,10 +2,8 @@
 #include "precomp.h"
 
 struct RouteFilter {
-    std::string host;          // required, lowercase, e.g. "api.example.com"
-    std::string path;          // optional, e.g. "/v1" — empty means match all paths on host
-    std::string internalId;    // stable UUID derived from host+path, used for autodiscovery
-    std::string internalName;  // human-readable name shown on Treblle platform
+    std::string host;   // required, lowercase, e.g. "api.example.com"
+    std::string path;   // optional prefix, e.g. "/v1" — empty means entire host
 };
 
 struct TreblleConfig {
@@ -13,7 +11,7 @@ struct TreblleConfig {
     std::string              apiKey;      // API project key → sent as project_id in payload
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
-    std::vector<RouteFilter> includeRoutes;
+    std::vector<RouteFilter> excludeRoutes;
     bool                     loaded      = false;
 };
 
@@ -33,9 +31,8 @@ public:
     // Returns a snapshot of the current config (copied under lock).
     TreblleConfig Get() const;
 
-    // Returns the first matching RouteFilter, or nullptr if no match.
-    bool MatchRoute(const std::string& host, const std::string& urlPath,
-                    std::string& outInternalId, std::string& outInternalName) const;
+    // Returns true if the host+path matches an exclude_routes entry.
+    bool IsExcluded(const std::string& host, const std::string& urlPath) const;
 
 private:
     Config() = default;
