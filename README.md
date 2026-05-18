@@ -274,6 +274,62 @@ iisreset /start
 
 ---
 
+## Testing
+
+The unit tests cover the core business-logic components: data masking, JSON/URL utilities, config parsing and route exclusion, the async queue, body-capture helpers, and payload assembly. They run on every push via GitHub Actions and can be run locally on any Windows machine with Visual Studio 2022.
+
+### Run locally
+
+Open a **Developer PowerShell for VS 2022** (or any terminal with the VS environment loaded) and run from the repo root:
+
+```powershell
+# Configure (one-time, or after adding new test files)
+cmake -S tests -B build/tests -G "Visual Studio 17 2022" -A x64
+
+# Build
+cmake --build build/tests --config Release
+
+# Run all tests
+ctest --test-dir build/tests -C Release --output-on-failure
+```
+
+To run a specific suite or test, use the test binary directly:
+
+```powershell
+# All tests with verbose output
+build\tests\Release\TreblleTests.exe
+
+# One suite
+build\tests\Release\TreblleTests.exe --gtest_filter=DataMasker.*
+
+# One specific test
+build\tests\Release\TreblleTests.exe --gtest_filter=DataMasker.SamplePayload_MaskedField
+
+# List all available tests
+build\tests\Release\TreblleTests.exe --gtest_list_tests
+```
+
+### Run via CI
+
+Tests run automatically on every push and pull request. The workflow builds the DLL first, then configures, builds, and runs the tests. Failed tests print their full output in the Actions log.
+
+### Test coverage
+
+| Suite | What it covers |
+|-------|----------------|
+| `DataMasker` | `MaskJson` — string/number/object/boolean masking, nesting, case-insensitivity, 500 KB size limit; `MaskHeaders` — header value redaction |
+| `Utils` | `JsonEscape`, `ToLower`, `StartsWithCI`, `ParseQueryPath`, `ParseQueryString`, `ComputeHostId` |
+| `Config` | JSON parsing of all fields, default values, `exclude_routes` array, `masked_keywords` array, `IsExcluded` with host-only and host+path rules |
+| `AsyncQueue` | FIFO ordering, empty-queue timeout, shutdown signalling, 5 000-item drop-oldest limit, concurrent push/pop |
+| `BodyCapture` | `IsLikelyJson` — object, array, whitespace trimming, plain text, XML, mismatched braces |
+| `PayloadBuilder` | Full JSON structure against the sample payload, `api_key`/`sdk_token` placement, masking applied before assembly, truncated-body error object |
+
+### Prerequisites
+
+Google Test is fetched automatically by CMake (`FetchContent`) — no manual install needed. An internet connection is required on the first build; subsequent builds use the cached download.
+
+---
+
 ## Uninstalling
 
 ```powershell

@@ -266,11 +266,16 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         auto ua = ctx_.requestHeaders.find("user-agent");
         ctx_.userAgent = (ua != ctx_.requestHeaders.end()) ? ua->second : "";
 
-        // Request body — only for JSON content types
+        // Request body — JSON captured verbatim; file uploads replaced with metadata
         PCSTR pCT = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
-        bool hasJsonBody = pCT && ToLower(pCT).find("application/json") != std::string::npos;
-        if (hasJsonBody) {
+        std::string ct = pCT ? ToLower(pCT) : "";
+
+        if (ct.find("application/json") != std::string::npos) {
             ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
+        } else if (ct.find("multipart/form-data") != std::string::npos) {
+            PCSTR pCL = pRaw->Headers.KnownHeaders[HttpHeaderContentLength].pRawValue;
+            LONGLONG cl = pCL ? _atoi64(pCL) : 0;
+            ctx_.requestBody = SummarizeMultipartBody(pCtx, pCT, cl);
         }
     } catch (...) {}
 
