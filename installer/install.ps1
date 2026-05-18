@@ -136,11 +136,12 @@ Write-Host "Registering module with IIS..." -ForegroundColor Cyan
 # Remove any previous registration first (idempotent)
 $existing = & $appcmd list module /name:TreblleAgent 2>$null
 if ($existing) {
-    & $appcmd delete module /name:TreblleAgent | Out-Null
+    & $appcmd uninstall module /module.name:TreblleAgent | Out-Null
     Write-Host "  Removed previous registration." -ForegroundColor Gray
 }
 
-$result = & $appcmd add module /name:TreblleAgent /image:"$DllDest" 2>&1
+# install module registers the native DLL globally and enables it
+$result = & $appcmd install module /name:TreblleAgent /image:"$DllDest" 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Error "appcmd failed to register the module: $result"
     exit 1

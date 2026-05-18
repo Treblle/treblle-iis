@@ -20,7 +20,7 @@ Write-Host ""
 if (Test-Path $appcmd) {
     $existing = & $appcmd list module /name:TreblleAgent 2>$null
     if ($existing) {
-        & $appcmd delete module /name:TreblleAgent | Out-Null
+        & $appcmd uninstall module /module.name:TreblleAgent | Out-Null
         Write-Host "Agent unregistered from IIS." -ForegroundColor Green
     } else {
         Write-Host "Agent was not registered in IIS." -ForegroundColor Yellow
