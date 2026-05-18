@@ -23,14 +23,15 @@ public:
     static Config& Instance();
 
     // Load config from <dllPath directory>\treblle.config.
-    // Safe to call from RegisterModule; returns false on parse error (silently).
+    // Safe to call from RegisterModule; returns false on parse/validation error.
     bool Load(const std::wstring& dllPath);
 
     // Check if the config file has been modified and reload if so.
     void CheckReload();
 
-    // Returns a snapshot of the current config (copied under lock).
-    TreblleConfig Get() const;
+    // Returns a snapshot of the current config as a shared_ptr.
+    // Callers hold the pointer for the duration of the request — no lock needed after Get().
+    std::shared_ptr<const TreblleConfig> Get() const;
 
     // Returns true if the host+path matches an exclude_routes entry.
     bool IsExcluded(const std::string& host, const std::string& urlPath) const;
@@ -42,8 +43,8 @@ private:
 
     bool LoadFromFile();
 
-    mutable std::mutex mutex_;
-    TreblleConfig      config_;
-    std::wstring       configPath_;
-    FILETIME           lastWriteTime_ = {};
+    mutable std::mutex                   mutex_;
+    std::shared_ptr<TreblleConfig>       config_ = std::make_shared<TreblleConfig>();
+    std::wstring                         configPath_;
+    FILETIME                             lastWriteTime_ = {};
 };

@@ -94,7 +94,7 @@ TEST_F(PayloadBuilderTest, Build_ServerSection_Present) {
 TEST_F(PayloadBuilderTest, Build_LanguageSection_Present) {
     std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
     EXPECT_TRUE(Contains(p, "\"language\""));
-    EXPECT_TRUE(Contains(p, "\"name\":\"Netcore\""));
+    EXPECT_TRUE(Contains(p, "\"name\":\"iis\""));
 }
 
 TEST_F(PayloadBuilderTest, Build_TruncatedRequestBody_ErrorObject) {

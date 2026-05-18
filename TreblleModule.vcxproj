@@ -110,6 +110,7 @@
 
   <ItemGroup>
     <ClInclude Include="src\precomp.h" />
+    <ClInclude Include="src\Constants.h" />
     <ClInclude Include="src\TreblleModule.h" />
     <ClInclude Include="src\RequestContext.h" />
     <ClInclude Include="src\Config.h" />
@@ -119,6 +120,7 @@
     <ClInclude Include="src\PayloadBuilder.h" />
     <ClInclude Include="src\DataMasker.h" />
     <ClInclude Include="src\Utils.h" />
+    <ClInclude Include="src\vendor\json.hpp" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

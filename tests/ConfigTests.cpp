@@ -47,23 +47,23 @@ TEST_F(ConfigTest, Load_AllFields_Parsed) {
     ASSERT_TRUE(Config::Instance().Load(dllPath_));
     auto cfg = Config::Instance().Get();
 
-    EXPECT_EQ(cfg.apiKey,     "rIdDODfpGjmzllxM92dAJLhJPA");
-    EXPECT_EQ(cfg.sdkToken,   "PyZL29nBwb0gIFZ2JsqpwQlBWH8UkABf");
-    EXPECT_EQ(cfg.treblleUrl, "https://custom.treblle.com");
-    EXPECT_TRUE(cfg.debugMode);
-    EXPECT_TRUE(cfg.loaded);
+    EXPECT_EQ(cfg->apiKey,     "rIdDODfpGjmzllxM92dAJLhJPA");
+    EXPECT_EQ(cfg->sdkToken,   "PyZL29nBwb0gIFZ2JsqpwQlBWH8UkABf");
+    EXPECT_EQ(cfg->treblleUrl, "https://custom.treblle.com");
+    EXPECT_TRUE(cfg->debugMode);
+    EXPECT_TRUE(cfg->loaded);
 }
 
 TEST_F(ConfigTest, Load_MissingTreblleUrl_UsesDefault) {
     WriteConfig(R"({"api_key":"k","sdk_token":"t"})");
     Config::Instance().Load(dllPath_);
-    EXPECT_EQ(Config::Instance().Get().treblleUrl, "https://ingress.treblle.com");
+    EXPECT_EQ(Config::Instance().Get()->treblleUrl, "https://ingress.treblle.com");
 }
 
 TEST_F(ConfigTest, Load_DebugFalse_Default) {
     WriteConfig(R"({"api_key":"k","sdk_token":"t"})");
     Config::Instance().Load(dllPath_);
-    EXPECT_FALSE(Config::Instance().Get().debugMode);
+    EXPECT_FALSE(Config::Instance().Get()->debugMode);
 }
 
 TEST_F(ConfigTest, Load_ExcludeRoutes_Parsed) {
@@ -78,11 +78,11 @@ TEST_F(ConfigTest, Load_ExcludeRoutes_Parsed) {
     Config::Instance().Load(dllPath_);
     auto cfg = Config::Instance().Get();
 
-    ASSERT_EQ(cfg.excludeRoutes.size(), 2u);
-    EXPECT_EQ(cfg.excludeRoutes[0].host, "internal.example.com");
-    EXPECT_EQ(cfg.excludeRoutes[0].path, "");
-    EXPECT_EQ(cfg.excludeRoutes[1].host, "api.example.com");
-    EXPECT_EQ(cfg.excludeRoutes[1].path, "/health");
+    ASSERT_EQ(cfg->excludeRoutes.size(), 2u);
+    EXPECT_EQ(cfg->excludeRoutes[0].host, "internal.example.com");
+    EXPECT_EQ(cfg->excludeRoutes[0].path, "");
+    EXPECT_EQ(cfg->excludeRoutes[1].host, "api.example.com");
+    EXPECT_EQ(cfg->excludeRoutes[1].path, "/health");
 }
 
 TEST_F(ConfigTest, Load_MaskedKeywordsArray_Parsed) {
@@ -92,7 +92,7 @@ TEST_F(ConfigTest, Load_MaskedKeywordsArray_Parsed) {
         "masked_keywords": ["password", "ssn", "maskedField"]
     })");
     Config::Instance().Load(dllPath_);
-    auto kws = Config::Instance().Get().maskedKeywords;
+    auto kws = Config::Instance().Get()->maskedKeywords;
 
     ASSERT_EQ(kws.size(), 3u);
     EXPECT_EQ(kws[0], "password");
@@ -103,11 +103,26 @@ TEST_F(ConfigTest, Load_MaskedKeywordsArray_Parsed) {
 TEST_F(ConfigTest, Load_MissingMaskedKeywords_UsesDefaults) {
     WriteConfig(R"({"api_key":"k","sdk_token":"t"})");
     Config::Instance().Load(dllPath_);
-    auto kws = Config::Instance().Get().maskedKeywords;
+    auto kws = Config::Instance().Get()->maskedKeywords;
 
     EXPECT_FALSE(kws.empty());
     auto it = std::find(kws.begin(), kws.end(), "password");
     EXPECT_NE(it, kws.end()) << "Default keywords must include 'password'";
+}
+
+TEST_F(ConfigTest, Load_EmptyApiKey_Fails) {
+    WriteConfig(R"({"api_key":"","sdk_token":"t"})");
+    EXPECT_FALSE(Config::Instance().Load(dllPath_));
+}
+
+TEST_F(ConfigTest, Load_EmptySdkToken_Fails) {
+    WriteConfig(R"({"api_key":"k","sdk_token":""})");
+    EXPECT_FALSE(Config::Instance().Load(dllPath_));
+}
+
+TEST_F(ConfigTest, Load_InvalidJson_Fails) {
+    WriteConfig("{not valid json}");
+    EXPECT_FALSE(Config::Instance().Load(dllPath_));
 }
 
 // ── IsExcluded ────────────────────────────────────────────────────────────────

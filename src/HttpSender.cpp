@@ -1,5 +1,6 @@
 #include "precomp.h"
 #include "HttpSender.h"
+#include "Constants.h"
 #include "Utils.h"
 
 HttpSender::HttpSender()
@@ -9,7 +10,7 @@ HttpSender::HttpSender()
                              WINHTTP_NO_PROXY_BYPASS,
                              0)) {
     if (hSession_) {
-        DWORD timeout = 10000; // 10 s
+        DWORD timeout = TreblleConst::kHttpTimeoutMs;
         WinHttpSetOption(hSession_, WINHTTP_OPTION_RESOLVE_TIMEOUT, &timeout, sizeof(timeout));
         WinHttpSetOption(hSession_, WINHTTP_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
         WinHttpSetOption(hSession_, WINHTTP_OPTION_SEND_TIMEOUT,    &timeout, sizeof(timeout));
@@ -33,7 +34,6 @@ HttpSender::~HttpSender() {
 bool HttpSender::EnsureConnected(const std::string& url, bool debugMode) {
     if (hConnect_ && url == cachedUrl_) return true;
 
-    // URL changed or first call — re-parse and reconnect.
     if (hConnect_) { WinHttpCloseHandle(hConnect_); hConnect_ = nullptr; }
     cachedUrl_.clear();
 
@@ -80,7 +80,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
     if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
 
     if (debugMode)
-        LogDebug("Treblle: sending payload: " + jsonPayload, true);
+        LogDebug("Treblle: sending payload (" + std::to_string(jsonPayload.size()) + " bytes)", true);
 
     if (!EnsureConnected(url, debugMode)) return false;
 
@@ -89,7 +89,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
                                         nullptr, WINHTTP_NO_REFERER,
                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hReq) {
-        // Stale connection — drop it and reconnect once.
+        // Stale connection — drop and reconnect once.
         WinHttpCloseHandle(hConnect_); hConnect_ = nullptr; cachedUrl_.clear();
         if (!EnsureConnected(url, debugMode)) return false;
         hReq = WinHttpOpenRequest(hConnect_, L"POST", wPath_.c_str(),
@@ -101,14 +101,13 @@ bool HttpSender::Send(const std::string& jsonPayload,
         }
     }
 
-    // Build headers
     std::wstring headers = L"Content-Type: application/json\r\n";
     if (!sdkToken.empty()) {
         int wTokenLen = MultiByteToWideChar(CP_UTF8, 0, sdkToken.c_str(), -1, nullptr, 0);
         if (wTokenLen > 1) {
             std::wstring wToken(wTokenLen, L'\0');
             MultiByteToWideChar(CP_UTF8, 0, sdkToken.c_str(), -1, &wToken[0], wTokenLen);
-            wToken.resize(wTokenLen - 1); // strip null terminator before concatenating
+            wToken.resize(wTokenLen - 1);
             headers += L"x-api-key: " + wToken + L"\r\n";
         }
     }
@@ -137,6 +136,16 @@ bool HttpSender::Send(const std::string& jsonPayload,
                 snprintf(msg, sizeof(msg), "Treblle: ingress returned HTTP %lu", statusCode);
                 LogDebug(msg, true);
             }
+
+            // Drain response body to allow the connection to be reused via keep-alive.
+            DWORD dwSize = 0;
+            do {
+                dwSize = 0;
+                if (!WinHttpQueryDataAvailable(hReq, &dwSize) || dwSize == 0) break;
+                std::vector<char> buf(dwSize);
+                DWORD dwDownloaded = 0;
+                if (!WinHttpReadData(hReq, buf.data(), dwSize, &dwDownloaded)) break;
+            } while (dwSize > 0);
         }
     } else if (debugMode) {
         char msg[64];

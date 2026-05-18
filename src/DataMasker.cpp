@@ -1,7 +1,6 @@
 #include "precomp.h"
 #include "DataMasker.h"
-
-static const size_t kMaskSizeLimit = 500 * 1024; // 500 KB
+#include "Constants.h"
 
 namespace {
 
@@ -25,7 +24,6 @@ static size_t SkipStr(const std::string& s, size_t pos) {
 }
 
 // Read a JSON string (pos must point at opening '"').
-// Returns decoded content and advances pos past the closing '"'.
 static std::string ReadStr(const std::string& s, size_t& pos) {
     if (pos >= s.size() || s[pos] != '"') return {};
     ++pos;
@@ -59,13 +57,13 @@ static bool IsKeyword(const std::string& key, const std::vector<std::string>& kw
 
 // Write a masked replacement for the JSON value at pos. Advances pos past it.
 // String values → same-length '*' string.
-// Non-string values → same char-count '*' string.
-// Object/array values → single "*".
+// Non-string scalars → same char-count '*' string.
+// Object/array values → single "*" (iterative traversal — no recursion).
 static void WriteMasked(const std::string& src, size_t& pos, std::string& out) {
     if (pos >= src.size()) return;
 
     if (src[pos] == '"') {
-        ++pos; // skip opening '"'
+        ++pos;
         size_t count = 0;
         while (pos < src.size()) {
             if (src[pos] == '\\') {
@@ -81,22 +79,20 @@ static void WriteMasked(const std::string& src, size_t& pos, std::string& out) {
         out.append(count, '*');
         out += '"';
     } else if (src[pos] == '{' || src[pos] == '[') {
-        // Skip the entire nested structure and emit a single "*"
         char open  = src[pos];
         char close = (open == '{') ? '}' : ']';
         size_t depth = 0;
         while (pos < src.size()) {
             char ch = src[pos];
-            if (ch == '"')       { pos = SkipStr(src, pos); continue; }
-            if (ch == open)      { ++depth; ++pos; }
+            if (ch == '"')        { pos = SkipStr(src, pos); continue; }
+            if (ch == open)       { ++depth; ++pos; }
             else if (ch == close) { ++pos; if (--depth == 0) break; }
-            else                 { ++pos; }
+            else                  { ++pos; }
         }
         out += '"';
         out += '*';
         out += '"';
     } else {
-        // Number, boolean, null — skip to delimiter and emit same-length stars
         size_t start = pos;
         while (pos < src.size() &&
                src[pos] != ',' && src[pos] != '}' && src[pos] != ']' &&
@@ -110,12 +106,12 @@ static void WriteMasked(const std::string& src, size_t& pos, std::string& out) {
     }
 }
 
-// Forward declaration
+// Forward declarations
 static void ProcessValue(const std::string& src, size_t& pos, std::string& out,
-                         const std::vector<std::string>& kws);
+                         const std::vector<std::string>& kws, int depth);
 
 static void ProcessObject(const std::string& src, size_t& pos, std::string& out,
-                          const std::vector<std::string>& kws) {
+                          const std::vector<std::string>& kws, int depth) {
     out += '{';
     ++pos; // skip '{'
     bool first = true;
@@ -135,7 +131,6 @@ static void ProcessObject(const std::string& src, size_t& pos, std::string& out,
 
         if (src[pos] != '"') break; // malformed JSON
 
-        // Copy raw key and decode it simultaneously
         size_t rawStart = pos;
         std::string key = ReadStr(src, pos);
         out.append(src, rawStart, pos - rawStart);
@@ -147,13 +142,13 @@ static void ProcessObject(const std::string& src, size_t& pos, std::string& out,
         if (IsKeyword(key, kws)) {
             WriteMasked(src, pos, out);
         } else {
-            ProcessValue(src, pos, out, kws);
+            ProcessValue(src, pos, out, kws, depth);
         }
     }
 }
 
 static void ProcessArray(const std::string& src, size_t& pos, std::string& out,
-                         const std::vector<std::string>& kws) {
+                         const std::vector<std::string>& kws, int depth) {
     out += '[';
     ++pos; // skip '['
     bool first = true;
@@ -171,25 +166,33 @@ static void ProcessArray(const std::string& src, size_t& pos, std::string& out,
         }
         first = false;
 
-        ProcessValue(src, pos, out, kws);
+        ProcessValue(src, pos, out, kws, depth);
     }
 }
 
 static void ProcessValue(const std::string& src, size_t& pos, std::string& out,
-                         const std::vector<std::string>& kws) {
+                         const std::vector<std::string>& kws, int depth) {
     if (pos >= src.size()) return;
 
     char ch = src[pos];
     if (ch == '{') {
-        ProcessObject(src, pos, out, kws);
+        if (depth >= TreblleConst::kMaxMaskDepth) {
+            // Bail out iteratively — WriteMasked handles objects without recursion
+            WriteMasked(src, pos, out);
+        } else {
+            ProcessObject(src, pos, out, kws, depth + 1);
+        }
     } else if (ch == '[') {
-        ProcessArray(src, pos, out, kws);
+        if (depth >= TreblleConst::kMaxMaskDepth) {
+            WriteMasked(src, pos, out);
+        } else {
+            ProcessArray(src, pos, out, kws, depth + 1);
+        }
     } else if (ch == '"') {
         size_t start = pos;
         pos = SkipStr(src, pos);
         out.append(src, start, pos - start);
     } else {
-        // Number, boolean, null — copy until delimiter
         while (pos < src.size() &&
                src[pos] != ',' && src[pos] != '}' && src[pos] != ']' &&
                src[pos] != ' ' && src[pos] != '\t' &&
@@ -204,13 +207,13 @@ static void ProcessValue(const std::string& src, size_t& pos, std::string& out,
 // ── Public API ────────────────────────────────────────────────────────────────
 
 std::string MaskJson(const std::string& json, const std::vector<std::string>& keywords) {
-    if (json.empty() || keywords.empty() || json.size() > kMaskSizeLimit)
+    if (json.empty() || keywords.empty() || json.size() > TreblleConst::kMaskSizeLimit)
         return json;
 
     std::string out;
     out.reserve(json.size());
     size_t pos = SkipWS(json, 0);
-    ProcessValue(json, pos, out, keywords);
+    ProcessValue(json, pos, out, keywords, 0);
     return out;
 }
 

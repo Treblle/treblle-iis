@@ -1,5 +1,6 @@
 #include "precomp.h"
 #include "BodyCapture.h"
+#include "Constants.h"
 #include "Utils.h"
 
 std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated) {
@@ -9,16 +10,15 @@ std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated) {
     std::string body;
     body.reserve(4096);
 
-    const DWORD kChunk = 8192;
-    BYTE  buf[8192];
+    BYTE  buf[TreblleConst::kBodyReadBuffer];
     DWORD cbRead = 0;
 
     while (true) {
         cbRead = 0;
-        HRESULT hr = pReq->ReadEntityBody(buf, kChunk, FALSE, &cbRead, nullptr);
+        HRESULT hr = pReq->ReadEntityBody(buf, TreblleConst::kBodyReadBuffer, FALSE, &cbRead, nullptr);
         if (FAILED(hr) || cbRead == 0) break;
 
-        if (body.size() + cbRead > kMaxBodyBytes) {
+        if (body.size() + cbRead > TreblleConst::kMaxBodyBytes) {
             truncated = true;
             break;
         }
@@ -56,8 +56,8 @@ void CaptureResponseChunks(HTTP_RESPONSE* pRaw,
 
         totalSize += len;
 
-        if (!truncated && body.size() < kMaxBodyBytes) {
-            size_t canAppend = kMaxBodyBytes - body.size();
+        if (!truncated && body.size() < TreblleConst::kMaxBodyBytes) {
+            size_t canAppend = TreblleConst::kMaxBodyBytes - body.size();
             if (len > canAppend) {
                 body.append(data, canAppend);
                 truncated = true;
@@ -74,8 +74,6 @@ void CaptureResponseChunks(HTTP_RESPONSE* pRaw,
 
 namespace {
 
-// Extract the boundary token from a Content-Type header value.
-// "multipart/form-data; boundary=----WebKit..." → "----WebKit..."
 static std::string ExtractBoundary(const std::string& ct) {
     std::string lower = ToLower(ct);
     size_t pos = lower.find("boundary=");
@@ -92,8 +90,6 @@ static std::string ExtractBoundary(const std::string& ct) {
     return ct.substr(pos, end - pos);
 }
 
-// Extract a named parameter value from a header field value.
-// ExtractParam("form-data; name=\"file\"; filename=\"photo.jpg\"", "filename") → "photo.jpg"
 static std::string ExtractParam(const std::string& hval, const std::string& param) {
     std::string lower = ToLower(hval);
     std::string needle = param + "=";
@@ -132,24 +128,19 @@ std::string ParseMultipartFiles(const std::string& raw,
 
     size_t pos = 0;
     while (pos < raw.size()) {
-        // Find the next boundary marker
         size_t bpos = raw.find(delim, pos);
         if (bpos == std::string::npos) break;
         pos = bpos + delim.size();
 
-        // Terminal boundary ("--boundary--")?
         if (pos + 1 < raw.size() && raw[pos] == '-' && raw[pos + 1] == '-') break;
 
-        // Skip the CRLF that follows the boundary line
         if (pos + 1 < raw.size() && raw[pos] == '\r' && raw[pos + 1] == '\n') pos += 2;
         else if (pos < raw.size() && raw[pos] == '\n')                         pos += 1;
 
-        // Locate the blank line that separates part headers from part data
         size_t hdrEnd = raw.find("\r\n\r\n", pos);
         if (hdrEnd == std::string::npos) break;
         size_t dataStart = hdrEnd + 4;
 
-        // Parse the header block line-by-line
         std::string filename, mimeType;
         size_t hpos = pos;
         while (hpos < hdrEnd) {
@@ -165,7 +156,6 @@ std::string ParseMultipartFiles(const std::string& raw,
                 if (hname == "content-disposition") {
                     filename = ExtractParam(hval, "filename");
                 } else if (hname == "content-type") {
-                    // Drop any parameters (e.g. "; charset=utf-8")
                     size_t semi = hval.find(';');
                     mimeType = Trim(semi != std::string::npos ? hval.substr(0, semi) : hval);
                 }
@@ -175,20 +165,14 @@ std::string ParseMultipartFiles(const std::string& raw,
             hpos = lineEnd + 2;
         }
 
-        // Only record parts that are actual file uploads (have a filename)
         if (!filename.empty()) {
-            // Try to get an exact byte count for this part's data.
-            // The data ends at the CRLF immediately before the next boundary.
             LONGLONG partSize;
             size_t dataEnd = raw.find("\r\n" + delim, dataStart);
             if (dataEnd != std::string::npos) {
                 partSize = static_cast<LONGLONG>(dataEnd - dataStart);
             } else {
-                // Part extends beyond the read window — use total Content-Length
-                // as the best available approximation.
                 partSize = contentLength;
             }
-
             files.push_back({filename,
                              mimeType.empty() ? "application/octet-stream" : mimeType,
                              partSize});
@@ -220,18 +204,13 @@ std::string SummarizeMultipartBody(IHttpContext*       pCtx,
     std::string boundary = ExtractBoundary(contentType);
     if (boundary.empty()) return "[]";
 
-    // Read the leading portion of the body — enough to see all part headers
-    // and the full data of small files.
-    constexpr DWORD kWindow = 16384;
     IHttpRequest* pReq = pCtx->GetRequest();
 
-    BYTE  buf[kWindow];
+    BYTE  buf[TreblleConst::kMultipartWindow];
     DWORD cbRead = 0;
-    HRESULT hr = pReq->ReadEntityBody(buf, kWindow, FALSE, &cbRead, nullptr);
+    HRESULT hr = pReq->ReadEntityBody(buf, TreblleConst::kMultipartWindow, FALSE, &cbRead, nullptr);
     if (FAILED(hr) || cbRead == 0) return "[]";
 
-    // Re-insert immediately so the application handler still sees the full body.
-    // InsertEntityBody prepends to any unread bytes still in IIS's buffer.
     LPVOID pMem = pCtx->AllocateRequestMemory(cbRead);
     if (pMem) {
         memcpy(pMem, buf, cbRead);
@@ -246,7 +225,6 @@ std::string SummarizeMultipartBody(IHttpContext*       pCtx,
 
 bool IsLikelyJson(const std::string& body) {
     if (body.empty()) return false;
-    // Trim leading whitespace
     size_t start = 0;
     while (start < body.size() && (body[start] == ' ' || body[start] == '\t' ||
                                    body[start] == '\r' || body[start] == '\n'))
@@ -254,7 +232,6 @@ bool IsLikelyJson(const std::string& body) {
     if (start >= body.size()) return false;
     char first = body[start];
     if (first != '{' && first != '[') return false;
-    // Trim trailing whitespace
     size_t end = body.size() - 1;
     while (end > start && (body[end] == ' ' || body[end] == '\t' ||
                            body[end] == '\r' || body[end] == '\n'))
