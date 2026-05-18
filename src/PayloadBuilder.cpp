@@ -2,6 +2,7 @@
 #include "PayloadBuilder.h"
 #include "BodyCapture.h"
 #include "Utils.h"
+#include "DataMasker.h"
 
 static const char* kSdkName    = "Netcore";
 static const char* kSdkVersion = "1.0.0";
@@ -48,6 +49,15 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
     OsInfo      os  = GetOsInfo();
     std::string serverIp = GetServerIP();
     std::string iisVer   = GetIISVersion(pCtx);
+
+    // Apply sensitive-data masking to headers and bodies before serialising.
+    const std::vector<std::string>& kws = cfg.maskedKeywords;
+    auto reqHeaders  = ctx.requestHeaders;
+    auto respHeaders = ctx.responseHeaders;
+    MaskHeaders(reqHeaders,  kws);
+    MaskHeaders(respHeaders, kws);
+    const std::string reqBody  = MaskJson(ctx.requestBody,  kws);
+    const std::string respBody = MaskJson(ctx.responseBody, kws);
 
     // Format load_time with 3 decimal places
     char loadTimeBuf[32];
@@ -99,19 +109,19 @@ std::string PayloadBuilder::Build(const RequestContext& ctx,
     payload += "\"url\":\"";       payload += JsonEscape(ctx.url);              payload += "\",";
     payload += "\"user_agent\":\"";payload += JsonEscape(ctx.userAgent);        payload += "\",";
     payload += "\"method\":\"";    payload += JsonEscape(ctx.method);           payload += "\",";
-    payload += "\"headers\":";     payload += BuildHeadersObject(ctx.requestHeaders);  payload += ",";
-    payload += "\"body\":";        payload += BuildBodyField(ctx.requestBody, ctx.requestBodyTruncated); payload += ",";
+    payload += "\"headers\":";     payload += BuildHeadersObject(reqHeaders);  payload += ",";
+    payload += "\"body\":";        payload += BuildBodyField(reqBody, ctx.requestBodyTruncated); payload += ",";
     payload += "\"route_path\":\"";payload += JsonEscape(ctx.routePath);        payload += "\",";
     payload += "\"query\":";       payload += BuildQueryObject(ctx.queryParams);
     payload += "},"; // request
 
     // response
     payload += "\"response\":{";
-    payload += "\"headers\":";  payload += BuildHeadersObject(ctx.responseHeaders); payload += ",";
+    payload += "\"headers\":";  payload += BuildHeadersObject(respHeaders); payload += ",";
     payload += "\"code\":";     payload += std::to_string(ctx.statusCode);           payload += ",";
     payload += "\"size\":";     payload += responseSizeBuf;                          payload += ",";
     payload += "\"load_time\":";payload += loadTimeBuf;                              payload += ",";
-    payload += "\"body\":";     payload += BuildBodyField(ctx.responseBody, ctx.responseBodyTruncated);
+    payload += "\"body\":";     payload += BuildBodyField(respBody, ctx.responseBodyTruncated);
     payload += "},"; // response
 
     // errors (always empty — native module has no access to app-level exceptions)

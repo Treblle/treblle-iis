@@ -104,6 +104,7 @@
     <ClCompile Include="src\AsyncQueue.cpp" />
     <ClCompile Include="src\HttpSender.cpp" />
     <ClCompile Include="src\PayloadBuilder.cpp" />
+    <ClCompile Include="src\DataMasker.cpp" />
     <ClCompile Include="src\Utils.cpp" />
   </ItemGroup>
 
@@ -116,6 +117,7 @@
     <ClInclude Include="src\AsyncQueue.h" />
     <ClInclude Include="src\HttpSender.h" />
     <ClInclude Include="src\PayloadBuilder.h" />
+    <ClInclude Include="src\DataMasker.h" />
     <ClInclude Include="src\Utils.h" />
   </ItemGroup>
 

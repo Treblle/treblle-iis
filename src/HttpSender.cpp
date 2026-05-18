@@ -10,33 +10,38 @@ HttpSender::HttpSender()
                              0)) {
     if (hSession_) {
         DWORD timeout = 10000; // 10 s
+        WinHttpSetOption(hSession_, WINHTTP_OPTION_RESOLVE_TIMEOUT, &timeout, sizeof(timeout));
         WinHttpSetOption(hSession_, WINHTTP_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
         WinHttpSetOption(hSession_, WINHTTP_OPTION_SEND_TIMEOUT,    &timeout, sizeof(timeout));
         WinHttpSetOption(hSession_, WINHTTP_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+
+        // Request HTTP/2 via ALPN; WinHTTP falls back to HTTP/1.1 if the server
+        // doesn't advertise h2. Requires Windows 10 1607+ / Server 2016+.
+        DWORD protocols = WINHTTP_PROTOCOL_FLAG_HTTP2;
+        WinHttpSetOption(hSession_, WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL,
+                         &protocols, sizeof(protocols));
     }
 }
 
 HttpSender::~HttpSender() {
+    if (hConnect_) WinHttpCloseHandle(hConnect_);
     if (hSession_) WinHttpCloseHandle(hSession_);
 }
 
-bool HttpSender::Send(const std::string& jsonPayload,
-                      const std::string& url,
-                      const std::string& sdkToken,
-                      bool               debugMode) {
-    if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
+// ── Connection caching ────────────────────────────────────────────────────────
 
-    if (debugMode) {
-        LogDebug("Treblle: sending payload: " + jsonPayload, true);
-    }
+bool HttpSender::EnsureConnected(const std::string& url, bool debugMode) {
+    if (hConnect_ && url == cachedUrl_) return true;
 
-    // Convert URL to wide string for WinHTTP
+    // URL changed or first call — re-parse and reconnect.
+    if (hConnect_) { WinHttpCloseHandle(hConnect_); hConnect_ = nullptr; }
+    cachedUrl_.clear();
+
     int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
     if (wlen <= 0) return false;
     std::wstring wUrl(wlen, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wUrl[0], wlen);
 
-    // Crack the URL into components
     URL_COMPONENTS uc = {};
     uc.dwStructSize      = sizeof(uc);
     uc.dwHostNameLength  = (DWORD)-1;
@@ -48,28 +53,52 @@ bool HttpSender::Send(const std::string& jsonPayload,
         return false;
     }
 
-    std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
-    std::wstring path(uc.lpszUrlPath, uc.dwUrlPathLength);
-    if (uc.dwExtraInfoLength > 0) path += std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
-    if (path.empty()) path = L"/";
+    wHost_   = std::wstring(uc.lpszHostName, uc.dwHostNameLength);
+    wPath_   = std::wstring(uc.lpszUrlPath,  uc.dwUrlPathLength);
+    if (uc.dwExtraInfoLength > 0)
+        wPath_ += std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+    if (wPath_.empty()) wPath_ = L"/";
+    port_    = uc.nPort ? uc.nPort : INTERNET_DEFAULT_HTTPS_PORT;
+    isHttps_ = (uc.nScheme == INTERNET_SCHEME_HTTPS);
 
-    INTERNET_PORT port = uc.nPort ? uc.nPort : INTERNET_DEFAULT_HTTPS_PORT;
-    bool isHttps = (uc.nScheme == INTERNET_SCHEME_HTTPS);
-
-    HINTERNET hConn = WinHttpConnect(hSession_, host.c_str(), port, 0);
-    if (!hConn) {
+    hConnect_ = WinHttpConnect(hSession_, wHost_.c_str(), port_, 0);
+    if (!hConnect_) {
         if (debugMode) LogDebug("Treblle: WinHttpConnect failed", true);
         return false;
     }
 
-    DWORD flags   = isHttps ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hReq = WinHttpOpenRequest(hConn, L"POST", path.c_str(),
+    cachedUrl_ = url;
+    return true;
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+
+bool HttpSender::Send(const std::string& jsonPayload,
+                      const std::string& url,
+                      const std::string& sdkToken,
+                      bool               debugMode) {
+    if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
+
+    if (debugMode)
+        LogDebug("Treblle: sending payload: " + jsonPayload, true);
+
+    if (!EnsureConnected(url, debugMode)) return false;
+
+    DWORD flags = isHttps_ ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hReq = WinHttpOpenRequest(hConnect_, L"POST", wPath_.c_str(),
                                         nullptr, WINHTTP_NO_REFERER,
                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hReq) {
-        if (debugMode) LogDebug("Treblle: WinHttpOpenRequest failed", true);
-        WinHttpCloseHandle(hConn);
-        return false;
+        // Stale connection — drop it and reconnect once.
+        WinHttpCloseHandle(hConnect_); hConnect_ = nullptr; cachedUrl_.clear();
+        if (!EnsureConnected(url, debugMode)) return false;
+        hReq = WinHttpOpenRequest(hConnect_, L"POST", wPath_.c_str(),
+                                  nullptr, WINHTTP_NO_REFERER,
+                                  WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+        if (!hReq) {
+            if (debugMode) LogDebug("Treblle: WinHttpOpenRequest failed", true);
+            return false;
+        }
     }
 
     // Build headers
@@ -116,6 +145,5 @@ bool HttpSender::Send(const std::string& jsonPayload,
     }
 
     WinHttpCloseHandle(hReq);
-    WinHttpCloseHandle(hConn);
     return success;
 }

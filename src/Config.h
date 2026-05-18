@@ -12,6 +12,7 @@ struct TreblleConfig {
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
     std::vector<RouteFilter> excludeRoutes;
+    std::vector<std::string> maskedKeywords; // keys whose values are replaced with '*'
     bool                     loaded      = false;
 };
 

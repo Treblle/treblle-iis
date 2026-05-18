@@ -122,6 +122,64 @@ bool FindBool(const std::string& json, const std::string& key, bool defaultVal =
     return defaultVal;
 }
 
+// Default sensitive-field names masked when 'masked_keywords' is absent from config.
+static const std::vector<std::string> kDefaultMaskedKeywords = {
+    "password", "pwd", "secret", "password_confirmation", "passwordConfirmation",
+    "cc", "card_number", "cardNumber", "ccv", "credit_score", "creditScore", "ssn"
+};
+
+// Parse masked_keywords — JSON array ["k1","k2"] or comma-separated string "k1,k2".
+// Returns the default list when the key is absent; returns exactly what is configured
+// (possibly empty) when the key is present, so users can disable all masking.
+static std::vector<std::string> ParseMaskedKeywords(const std::string& json) {
+    const char* kKey = "\"masked_keywords\"";
+    size_t k = json.find(kKey);
+    if (k == std::string::npos) return kDefaultMaskedKeywords;
+
+    size_t pos = SkipWS(json, k + strlen(kKey));
+    if (pos >= json.size() || json[pos] != ':') return kDefaultMaskedKeywords;
+    pos = SkipWS(json, pos + 1);
+    if (pos >= json.size()) return kDefaultMaskedKeywords;
+
+    std::vector<std::string> result;
+
+    auto trimmed = [](const std::string& s) -> std::string {
+        size_t b = s.find_first_not_of(' ');
+        if (b == std::string::npos) return {};
+        size_t e = s.find_last_not_of(' ');
+        return s.substr(b, e - b + 1);
+    };
+
+    if (json[pos] == '[') {
+        ++pos; // skip '['
+        while (pos < json.size()) {
+            pos = SkipWS(json, pos);
+            if (pos >= json.size() || json[pos] == ']') break;
+            if (json[pos] == '"') {
+                std::string val = trimmed(ParseString(json, pos));
+                if (!val.empty()) result.push_back(std::move(val));
+            } else if (json[pos] == ',') {
+                ++pos;
+            } else {
+                ++pos;
+            }
+        }
+    } else if (json[pos] == '"') {
+        std::string csv = ParseString(json, pos);
+        size_t start = 0;
+        while (start <= csv.size()) {
+            size_t comma = csv.find(',', start);
+            std::string token = trimmed(csv.substr(
+                start, comma == std::string::npos ? std::string::npos : comma - start));
+            if (!token.empty()) result.push_back(std::move(token));
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+
+    return result;
+}
+
 // Parse exclude_routes array — list of {"host":"...", "path":"..."} objects.
 std::vector<RouteFilter> ParseExcludeRoutes(const std::string& json) {
     std::vector<RouteFilter> routes;
@@ -168,11 +226,12 @@ bool Config::LoadFromFile() {
     if (json.empty()) return false;
 
     TreblleConfig newCfg;
-    newCfg.sdkToken      = FindString(json, "sdk_token");
-    newCfg.apiKey        = FindString(json, "api_key");
-    newCfg.debugMode     = FindBool(json, "debug", false);
-    newCfg.excludeRoutes = ParseExcludeRoutes(json);
-    newCfg.loaded        = true;
+    newCfg.sdkToken        = FindString(json, "sdk_token");
+    newCfg.apiKey          = FindString(json, "api_key");
+    newCfg.debugMode       = FindBool(json, "debug", false);
+    newCfg.excludeRoutes   = ParseExcludeRoutes(json);
+    newCfg.maskedKeywords  = ParseMaskedKeywords(json);
+    newCfg.loaded          = true;
 
     std::string url = FindString(json, "treblle_url");
     if (!url.empty()) newCfg.treblleUrl = url;

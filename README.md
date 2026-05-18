@@ -93,6 +93,12 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
     { "host": "internal.yourdomain.com" },
     { "host": "api.yourdomain.com", "path": "/health" },
     { "host": "api.yourdomain.com", "path": "/metrics" }
+  ],
+  "masked_keywords": [
+    "password", "pwd", "secret",
+    "password_confirmation", "passwordConfirmation",
+    "cc", "card_number", "cardNumber", "ccv",
+    "credit_score", "creditScore", "ssn"
   ]
 }
 ```
@@ -106,6 +112,7 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
 | `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support. |
 | `debug` | bool | `false` | When `true`, errors are written to the Windows Application Event Log (source: `Treblle`). Leave `false` in production. |
 | `exclude_routes` | array | `[]` | List of route objects to exclude from monitoring. **Empty = monitor all JSON API traffic.** |
+| `masked_keywords` | array | *(see below)* | List of field names whose values are redacted before sending to Treblle. Omit to use the built-in defaults. Set to `[]` to disable masking entirely. |
 
 Each object in `exclude_routes`:
 
@@ -146,6 +153,63 @@ A request is tracked only when:
 ```
 
 If `exclude_routes` is omitted or empty, all JSON API traffic across all hosts is monitored.
+
+---
+
+## Sensitive data masking
+
+The module redacts the values of fields whose names match `masked_keywords` before any data leaves the server. Masking is applied to:
+
+- Request body (JSON)
+- Response body (JSON)
+- Request headers
+- Response headers
+
+Each character of a matched value is replaced with `*` so the length is preserved:
+
+```
+"password": "hunter2"   →   "password": "*******"
+"cc": "4111111111111111" →   "cc": "****************"
+```
+
+### Default masked keywords
+
+The following fields are masked automatically when `masked_keywords` is omitted from the config:
+
+`password`, `pwd`, `secret`, `password_confirmation`, `passwordConfirmation`, `cc`, `card_number`, `cardNumber`, `ccv`, `credit_score`, `creditScore`, `ssn`
+
+### Customising the list
+
+Add or remove keywords by specifying your own list. The list replaces the defaults entirely, so include any defaults you want to keep:
+
+```json
+"masked_keywords": [
+  "password", "pwd", "secret",
+  "password_confirmation", "passwordConfirmation",
+  "cc", "card_number", "cardNumber", "ccv",
+  "credit_score", "creditScore", "ssn",
+  "api_token", "access_token", "private_key"
+]
+```
+
+To disable masking completely:
+
+```json
+"masked_keywords": []
+```
+
+### Masking behaviour reference
+
+| Value type | Input | Output |
+|------------|-------|--------|
+| String | `"hunter2"` | `"*******"` |
+| Number | `4242` | `"****"` |
+| Boolean / null | `true` | `"****"` |
+| Nested object or array | `{"a":1}` | `"*"` |
+
+Matching is **case-insensitive** and applies at **any nesting depth** in the JSON body. Bodies larger than **500 KB** are sent unmasked to avoid performance impact — ensure sensitive fields are not present in very large payloads.
+
+> **Changes to `masked_keywords` take effect immediately** without an IIS restart, just like all other config changes.
 
 ---
 
