@@ -16,9 +16,9 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>TreblleModule</RootNamespace>
+    <RootNamespace>TreblleAgent</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>TreblleModule</ProjectName>
+    <ProjectName>TreblleAgent</ProjectName>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -58,7 +58,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>winhttp.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>$(ProjectDir)TreblleModule.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>$(ProjectDir)TreblleAgent.def</ModuleDefinitionFile>
     </Link>
     <PreBuildEvent>
       <Command></Command>
@@ -88,7 +88,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <AdditionalDependencies>winhttp.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>$(ProjectDir)TreblleModule.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>$(ProjectDir)TreblleAgent.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
 
@@ -98,7 +98,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\TreblleModule.cpp" />
+    <ClCompile Include="src\TreblleAgent.cpp" />
     <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\BodyCapture.cpp" />
     <ClCompile Include="src\AsyncQueue.cpp" />
@@ -111,7 +111,7 @@
   <ItemGroup>
     <ClInclude Include="src\precomp.h" />
     <ClInclude Include="src\Constants.h" />
-    <ClInclude Include="src\TreblleModule.h" />
+    <ClInclude Include="src\TreblleAgent.h" />
     <ClInclude Include="src\RequestContext.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\BodyCapture.h" />

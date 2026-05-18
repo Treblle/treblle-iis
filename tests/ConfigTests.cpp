@@ -13,7 +13,7 @@ protected:
         GetTempPathW(MAX_PATH, tmp);
         tempDir_    = tmp;
         configPath_ = tempDir_ + L"treblle.config";
-        dllPath_    = tempDir_ + L"TreblleModuleTest.dll"; // Load() strips the filename
+        dllPath_    = tempDir_ + L"TreblleAgentTest.dll"; // Load() strips the filename
     }
 
     void TearDown() override {

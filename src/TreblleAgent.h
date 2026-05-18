@@ -3,8 +3,8 @@
 #include "RequestContext.h"
 #include "AsyncQueue.h"
 
-// Per-request module instance. IIS creates one per request via the factory.
-class CTreblleModule : public CHttpModule {
+// Per-request agent instance. IIS creates one per request via the factory.
+class CTreblleAgent : public CHttpModule {
 public:
     REQUEST_NOTIFICATION_STATUS OnBeginRequest(
         IHttpContext*   pCtx,
@@ -30,8 +30,8 @@ private:
     bool        IsTrackedMethod(const std::string& method);
 };
 
-// Module factory — one instance per server, creates CTreblleModule per request.
-class CTreblleModuleFactory : public IHttpModuleFactory {
+// Agent factory — one instance per server, creates CTreblleAgent per request.
+class CTreblleAgentFactory : public IHttpModuleFactory {
 public:
     HRESULT GetHttpModule(OUT CHttpModule** ppModule,
                           IN  IModuleAllocator*) override;

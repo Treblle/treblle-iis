@@ -1,5 +1,5 @@
 #include "precomp.h"
-#include "TreblleModule.h"
+#include "TreblleAgent.h"
 #include "Config.h"
 #include "BodyCapture.h"
 #include "PayloadBuilder.h"
@@ -45,13 +45,13 @@ static DWORD WINAPI WorkerThreadProc(LPVOID) {
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-HRESULT CTreblleModuleFactory::GetHttpModule(OUT CHttpModule** ppModule,
+HRESULT CTreblleAgentFactory::GetHttpModule(OUT CHttpModule** ppModule,
                                               IN  IModuleAllocator*) {
-    *ppModule = new(std::nothrow) CTreblleModule();
+    *ppModule = new(std::nothrow) CTreblleAgent();
     return *ppModule ? S_OK : E_OUTOFMEMORY;
 }
 
-void CTreblleModuleFactory::Terminate() {
+void CTreblleAgentFactory::Terminate() {
     if (g_pQueue) g_pQueue->Shutdown();
     if (g_hWorkerThread) {
         WaitForSingleObject(g_hWorkerThread, TreblleConst::kShutdownDrainMs);
@@ -86,7 +86,7 @@ HRESULT __stdcall RegisterModule(DWORD,
     g_hWorkerThread = CreateThread(nullptr, 0, WorkerThreadProc, nullptr, 0, nullptr);
 
     HRESULT hr = pInfo->SetRequestNotifications(
-        new(std::nothrow) CTreblleModuleFactory(),
+        new(std::nothrow) CTreblleAgentFactory(),
         RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
         0);
 
@@ -119,7 +119,7 @@ static void FillHeaderMap(const THeaders&                     hdrs,
 
 // ── Helper methods ────────────────────────────────────────────────────────────
 
-std::string CTreblleModule::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHORT unknownLen) {
+std::string CTreblleAgent::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHORT unknownLen) {
     switch (verb) {
         case HttpVerbGET:     return "GET";
         case HttpVerbPOST:    return "POST";
@@ -135,7 +135,7 @@ std::string CTreblleModule::GetMethodString(HTTP_VERB verb, PCSTR pUnknown, USHO
     }
 }
 
-bool CTreblleModule::IsTrackedMethod(const std::string& method) {
+bool CTreblleAgent::IsTrackedMethod(const std::string& method) {
     static const char* kTracked[] = {
         "GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"
     };
@@ -144,7 +144,7 @@ bool CTreblleModule::IsTrackedMethod(const std::string& method) {
     return false;
 }
 
-void CTreblleModule::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
+void CTreblleAgent::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
     static const HeaderEntry kKnown[] = {
         { HttpHeaderHost,             "host" },
         { HttpHeaderContentType,      "content-type" },
@@ -163,7 +163,7 @@ void CTreblleModule::CollectRequestHeaders(HTTP_REQUEST* pRaw) {
     FillHeaderMap(pRaw->Headers, ctx_.requestHeaders, kKnown, ARRAYSIZE(kKnown));
 }
 
-void CTreblleModule::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
+void CTreblleAgent::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
     static const HeaderEntry kKnown[] = {
         { HttpHeaderContentType,      "content-type" },
         { HttpHeaderContentLength,    "content-length" },
@@ -177,7 +177,7 @@ void CTreblleModule::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
     FillHeaderMap(pRaw->Headers, ctx_.responseHeaders, kKnown, ARRAYSIZE(kKnown));
 }
 
-std::string CTreblleModule::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
+std::string CTreblleAgent::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
     DWORD  cbHttps = 0;
     PCSTR  pHttps  = nullptr;
     bool isSecure  = SUCCEEDED(pCtx->GetServerVariable("HTTPS", &pHttps, &cbHttps))
@@ -194,7 +194,7 @@ std::string CTreblleModule::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw)
 
 // ── OnBeginRequest ────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
     try {
         Config::Instance().CheckReload();
@@ -265,7 +265,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
 
 // ── OnSendResponse ────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
     IHttpContext* pCtx, ISendResponseProvider*) {
     if (!ctx_.shouldTrack) return RQ_NOTIFICATION_CONTINUE;
     try {
@@ -298,7 +298,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
 
 // ── OnEndRequest ──────────────────────────────────────────────────────────────
 
-REQUEST_NOTIFICATION_STATUS CTreblleModule::OnEndRequest(
+REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnEndRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
     if (!ctx_.shouldTrack || !ctx_.responseHeadersDone) return RQ_NOTIFICATION_CONTINUE;
     try {
