@@ -214,7 +214,8 @@ std::string ComputeHostId(const std::string& host) {
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 
-void LogDebug(const std::string& msg) {
+void LogDebug(const std::string& msg, bool enabled) {
+    if (!enabled) return;
     std::string prefixed = "[TREBLLE]: " + msg;
     HANDLE hLog = RegisterEventSourceA(nullptr, "Treblle");
     if (!hLog) return;

@@ -6,6 +6,7 @@ struct RequestContext {
     bool responseHeadersDone   = false;
     bool requestBodyTruncated  = false;
     bool responseBodyTruncated = false;
+    bool debugMode             = false;
 
     LARGE_INTEGER startTime   = {};
     LARGE_INTEGER frequency   = {};

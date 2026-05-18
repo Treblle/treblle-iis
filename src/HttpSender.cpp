@@ -27,7 +27,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
     if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
 
     if (debugMode) {
-        LogDebug("Treblle: sending payload: " + jsonPayload);
+        LogDebug("Treblle: sending payload: " + jsonPayload, true);
     }
 
     // Convert URL to wide string for WinHTTP
@@ -44,7 +44,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
     uc.dwSchemeLength    = (DWORD)-1;
     uc.dwExtraInfoLength = (DWORD)-1;
     if (!WinHttpCrackUrl(wUrl.c_str(), 0, 0, &uc)) {
-        if (debugMode) LogDebug("Treblle: WinHttpCrackUrl failed for URL: " + url);
+        if (debugMode) LogDebug("Treblle: WinHttpCrackUrl failed for URL: " + url, true);
         return false;
     }
 
@@ -58,7 +58,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
 
     HINTERNET hConn = WinHttpConnect(hSession_, host.c_str(), port, 0);
     if (!hConn) {
-        if (debugMode) LogDebug("Treblle: WinHttpConnect failed");
+        if (debugMode) LogDebug("Treblle: WinHttpConnect failed", true);
         return false;
     }
 
@@ -67,7 +67,7 @@ bool HttpSender::Send(const std::string& jsonPayload,
                                         nullptr, WINHTTP_NO_REFERER,
                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hReq) {
-        if (debugMode) LogDebug("Treblle: WinHttpOpenRequest failed");
+        if (debugMode) LogDebug("Treblle: WinHttpOpenRequest failed", true);
         WinHttpCloseHandle(hConn);
         return false;
     }
@@ -106,13 +106,13 @@ bool HttpSender::Send(const std::string& jsonPayload,
             if (!success && debugMode) {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Treblle: ingress returned HTTP %lu", statusCode);
-                LogDebug(msg);
+                LogDebug(msg, true);
             }
         }
     } else if (debugMode) {
         char msg[64];
         snprintf(msg, sizeof(msg), "Treblle: WinHttpSendRequest failed (0x%08lX)", GetLastError());
-        LogDebug(msg);
+        LogDebug(msg, true);
     }
 
     WinHttpCloseHandle(hReq);

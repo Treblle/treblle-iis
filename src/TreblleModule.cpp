@@ -73,22 +73,19 @@ void CTreblleModuleFactory::Terminate() {
 HRESULT __stdcall RegisterModule(DWORD,
                                   IHttpModuleRegistrationInfo* pInfo,
                                   IHttpServer*) {
-    LogDebug("RegisterModule called");
-
     // Locate and load treblle.config from the same directory as this DLL
     WCHAR dllPath[MAX_PATH] = {};
     GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
 
-    // Log the config path
+    bool loaded = Config::Instance().Load(dllPath);
+    TreblleConfig cfg = Config::Instance().Get();
+    bool dbg = cfg.debugMode;
+
     char narrowPath[MAX_PATH] = {};
     WideCharToMultiByte(CP_UTF8, 0, dllPath, -1, narrowPath, MAX_PATH, nullptr, nullptr);
-    LogDebug(std::string("DLL path: ") + narrowPath);
-
-    bool loaded = Config::Instance().Load(dllPath);
-    LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"));
-
-    TreblleConfig cfg = Config::Instance().Get();
-    LogDebug("Excluded routes count: " + std::to_string(cfg.excludeRoutes.size()));
+    LogDebug(std::string("RegisterModule — DLL path: ") + narrowPath, dbg);
+    LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"), dbg);
+    LogDebug("Excluded routes count: " + std::to_string(cfg.excludeRoutes.size()), dbg);
 
     // Start the background sender thread
     g_pQueue = new(std::nothrow) AsyncQueue();
@@ -100,7 +97,7 @@ HRESULT __stdcall RegisterModule(DWORD,
         RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
         0);
 
-    LogDebug(std::string("SetRequestNotifications hr=") + std::to_string(hr));
+    LogDebug(std::string("SetRequestNotifications hr=") + std::to_string(hr), dbg);
     return hr;
 }
 
@@ -213,19 +210,9 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
         Config::Instance().CheckReload();
         TreblleConfig cfg = Config::Instance().Get();
 
-        LogDebug("OnBeginRequest fired. loaded=" + std::string(cfg.loaded ? "true" : "false")
-            + " excluded=" + std::to_string(cfg.excludeRoutes.size()));
-
         if (!cfg.loaded) return RQ_NOTIFICATION_CONTINUE;
-
-        IHttpRequest* pReq2 = pCtx->GetRequest();
-        HTTP_REQUEST* pRaw2 = pReq2->GetRawHttpRequest();
-        if (pRaw2) {
-            PCSTR pHostRaw2 = pRaw2->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
-            std::string host2 = pHostRaw2 ? pHostRaw2 : "(null)";
-            std::string url2  = pRaw2->pRawUrl ? pRaw2->pRawUrl : "(null)";
-            LogDebug("Request host=" + host2 + " url=" + url2);
-        }
+        bool dbg = cfg.debugMode;
+        ctx_.debugMode = dbg;
 
         IHttpRequest* pReq = pCtx->GetRequest();
         HTTP_REQUEST* pRaw = pReq->GetRawHttpRequest();
@@ -243,7 +230,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
 
         // Exclusion check — skip hosts/paths the user opted out of
         if (Config::Instance().IsExcluded(host, path)) {
-            LogDebug("skip host=" + host + " url=" + path + " — matched exclude_routes");
+            LogDebug("skip host=" + host + " url=" + path + " — matched exclude_routes", dbg);
             return RQ_NOTIFICATION_CONTINUE;
         }
 
@@ -256,7 +243,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnBeginRequest(
                                               pRaw->pUnknownVerb,
                                               pRaw->UnknownVerbLength);
         if (!IsTrackedMethod(method)) {
-            LogDebug("skip host=" + host + " url=" + path + " — method " + method + " not tracked");
+            LogDebug("skip host=" + host + " url=" + path + " — method " + method + " not tracked", dbg);
             return RQ_NOTIFICATION_CONTINUE;
         }
 
@@ -307,7 +294,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleModule::OnSendResponse(
             bool isJson = ct.find("application/json") != std::string::npos;
             if (!isJson) {
                 LogDebug("skip host=" + ctx_.internalName + " url=" + ctx_.routePath
-                    + " — response Content-Type \"" + ct + "\" is not JSON");
+                    + " — response Content-Type \"" + ct + "\" is not JSON", ctx_.debugMode);
                 ctx_.shouldTrack = false;
                 return RQ_NOTIFICATION_CONTINUE;
             }
