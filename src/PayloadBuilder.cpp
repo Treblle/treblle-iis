@@ -45,10 +45,10 @@ std::string PayloadBuilder::BuildBodyField(const std::string& body, bool truncat
 std::string PayloadBuilder::Build(const RequestContext& ctx,
                                   const TreblleConfig&  cfg,
                                   double                loadTimeMs,
-                                  IHttpContext*          pCtx) {
+                                  const std::string&    iisVersion) {
     OsInfo      os  = GetOsInfo();
     std::string serverIp = GetServerIP();
-    std::string iisVer   = GetIISVersion(pCtx);
+    const std::string& iisVer = iisVersion;
 
     // Apply sensitive-data masking to headers and bodies before serialising.
     const std::vector<std::string>& kws = cfg.maskedKeywords;

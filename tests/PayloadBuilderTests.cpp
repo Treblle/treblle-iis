@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include "PayloadBuilder.h"
-#include "MockIIS.h"
 #include <string>
 
 static bool Contains(const std::string& s, const std::string& needle) {
@@ -9,7 +8,6 @@ static bool Contains(const std::string& s, const std::string& needle) {
 
 class PayloadBuilderTest : public ::testing::Test {
 protected:
-    MockHttpContext mockCtx;
     RequestContext  ctx;
     TreblleConfig   cfg;
 
@@ -34,7 +32,7 @@ protected:
 };
 
 TEST_F(PayloadBuilderTest, Build_TopLevelKeys_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1112.488, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1112.488, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"api_key\""));
     EXPECT_TRUE(Contains(p, "\"sdk_token\""));
     EXPECT_TRUE(Contains(p, "\"sdk\""));
@@ -45,13 +43,13 @@ TEST_F(PayloadBuilderTest, Build_TopLevelKeys_Present) {
 }
 
 TEST_F(PayloadBuilderTest, Build_ApiKeyAndSdkToken_Correct) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"api_key\":\"rIdDODfpGjmzllxM92dAJLhJPA\""));
     EXPECT_TRUE(Contains(p, "\"sdk_token\":\"PyZL29nBwb0gIFZ2JsqpwQlBWH8UkABf\""));
 }
 
 TEST_F(PayloadBuilderTest, Build_RequestSection_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"request\""));
     EXPECT_TRUE(Contains(p, "\"method\":\"POST\""));
     EXPECT_TRUE(Contains(p, "\"route_path\":\"/api/test/register\""));
@@ -59,7 +57,7 @@ TEST_F(PayloadBuilderTest, Build_RequestSection_Present) {
 }
 
 TEST_F(PayloadBuilderTest, Build_ResponseSection_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1112.488, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1112.488, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"response\""));
     EXPECT_TRUE(Contains(p, "\"code\":200"));
     EXPECT_TRUE(Contains(p, "\"load_time\":1112.488"));
@@ -67,39 +65,39 @@ TEST_F(PayloadBuilderTest, Build_ResponseSection_Present) {
 
 TEST_F(PayloadBuilderTest, Build_MaskedKeyword_ValueRedacted) {
     cfg.maskedKeywords = {"maskedField"};
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     // Key must appear but the literal value "secret" must be gone
     EXPECT_TRUE(Contains(p, "\"maskedField\""));
     EXPECT_FALSE(Contains(p, "\"secret\""));
 }
 
 TEST_F(PayloadBuilderTest, Build_InternalIdAndName_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "7d8e120a-9ea0-ea78-dc27-b6dd61c13667"));
     EXPECT_TRUE(Contains(p, "Testing API - IIS"));
 }
 
 TEST_F(PayloadBuilderTest, Build_ErrorsArray_AlwaysEmpty) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"errors\":[]"));
 }
 
 TEST_F(PayloadBuilderTest, Build_ServerSection_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"server\""));
     EXPECT_TRUE(Contains(p, "\"timezone\":\"UTC\""));
     EXPECT_TRUE(Contains(p, "\"os\""));
 }
 
 TEST_F(PayloadBuilderTest, Build_LanguageSection_Present) {
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "\"language\""));
     EXPECT_TRUE(Contains(p, "\"name\":\"Netcore\""));
 }
 
 TEST_F(PayloadBuilderTest, Build_TruncatedRequestBody_ErrorObject) {
     ctx.requestBodyTruncated = true;
-    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, &mockCtx);
+    std::string p = PayloadBuilder::Build(ctx, cfg, 1.0, "Microsoft-IIS/10.0");
     EXPECT_TRUE(Contains(p, "treblle_error"));
     EXPECT_TRUE(Contains(p, "2MB"));
 }
