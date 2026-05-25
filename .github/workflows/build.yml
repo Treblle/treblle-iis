@@ -1,6 +1,8 @@
 name: Build
 
 on:
+  push:
+    branches-ignore: [main]
   release:
     types: [published]
   workflow_dispatch:
