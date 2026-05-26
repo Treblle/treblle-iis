@@ -34,6 +34,10 @@ public:
     // Callers hold the pointer for the duration of the request — no lock needed after Get().
     std::shared_ptr<const TreblleConfig> Get() const;
 
+    // Returns the matched default-excluded path prefix, or empty string if none.
+    // These are built-in and cannot be overridden by config.
+    static std::string MatchDefaultPath(const std::string& urlPath);
+
     // Returns true if the host+path matches an exclude_routes entry.
     bool IsExcluded(const std::string& host, const std::string& urlPath) const;
 

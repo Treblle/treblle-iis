@@ -79,6 +79,20 @@ bool HttpSender::Send(const std::string& jsonPayload,
                       bool               debugMode) {
     if (!hSession_ || jsonPayload.empty() || url.empty()) return false;
 
+    // 429 backoff: a previous response told us to wait via Retry-After.
+    if (retryAfterDelayMs_ != 0) {
+        if (GetTickCount() - retryAfterOpenedMs_ < retryAfterDelayMs_) return false;
+        retryAfterDelayMs_ = 0; // backoff window elapsed — reset
+    }
+
+    // Circuit breaker: trip open after consecutive 5xx/network failures;
+    // allow one probe attempt after the cooldown window elapses.
+    if (consecutiveFailures_ >= kTripThreshold) {
+        if (GetTickCount() - openedAtMs_ < kCooldownMs) return false;
+        if (debugMode)
+            LogDebug("Treblle: circuit breaker probing after cooldown", true);
+    }
+
     if (debugMode)
         LogDebug("Treblle: sending payload (" + std::to_string(jsonPayload.size()) + " bytes)", true);
 
@@ -112,18 +126,19 @@ bool HttpSender::Send(const std::string& jsonPayload,
         }
     }
 
-    BOOL ok = WinHttpSendRequest(hReq,
-                                  headers.c_str(),
-                                  (DWORD)headers.size(),
-                                  (LPVOID)jsonPayload.c_str(),
-                                  (DWORD)jsonPayload.size(),
-                                  (DWORD)jsonPayload.size(),
-                                  0);
-    bool success = false;
+    BOOL  ok         = WinHttpSendRequest(hReq,
+                                          headers.c_str(),
+                                          (DWORD)headers.size(),
+                                          (LPVOID)jsonPayload.c_str(),
+                                          (DWORD)jsonPayload.size(),
+                                          (DWORD)jsonPayload.size(),
+                                          0);
+    bool  success    = false;
+    DWORD statusCode = 0; // stays 0 if we never get an HTTP response (network failure)
+
     if (ok) {
         ok = WinHttpReceiveResponse(hReq, nullptr);
         if (ok) {
-            DWORD statusCode = 0;
             DWORD statusSize = sizeof(statusCode);
             WinHttpQueryHeaders(hReq,
                                 WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -131,7 +146,26 @@ bool HttpSender::Send(const std::string& jsonPayload,
                                 &statusCode, &statusSize,
                                 WINHTTP_NO_HEADER_INDEX);
             success = (statusCode >= 200 && statusCode < 300);
-            if (!success && debugMode) {
+
+            if (statusCode == 429) {
+                // Read Retry-After (numeric seconds); fall back to default.
+                WCHAR retryBuf[32] = {};
+                DWORD retryLen     = sizeof(retryBuf);
+                DWORD retryIndex   = WINHTTP_NO_HEADER_INDEX;
+                DWORD delaySec     = 0;
+                if (WinHttpQueryHeaders(hReq, WINHTTP_QUERY_CUSTOM, L"Retry-After",
+                                        retryBuf, &retryLen, &retryIndex))
+                    delaySec = (DWORD)_wtol(retryBuf);
+                if (delaySec == 0 || delaySec > 3600) delaySec = kRetryAfterDefaultMs / 1000;
+                retryAfterOpenedMs_ = GetTickCount();
+                retryAfterDelayMs_  = delaySec * 1000;
+                if (debugMode) {
+                    char msg[64];
+                    snprintf(msg, sizeof(msg),
+                             "Treblle: 429 received — backing off for %lu s", delaySec);
+                    LogDebug(msg, true);
+                }
+            } else if (!success && debugMode) {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Treblle: ingress returned HTTP %lu", statusCode);
                 LogDebug(msg, true);
@@ -154,5 +188,19 @@ bool HttpSender::Send(const std::string& jsonPayload,
     }
 
     WinHttpCloseHandle(hReq);
+
+    // Circuit breaker tracking: only 5xx and network failures (statusCode == 0) count.
+    // 4xx responses mean the server is reachable — don't penalise the breaker.
+    if (success) {
+        consecutiveFailures_ = 0;
+    } else if (statusCode == 0 || statusCode >= 500) {
+        ++consecutiveFailures_;
+        if (consecutiveFailures_ == kTripThreshold) {
+            openedAtMs_ = GetTickCount();
+            if (debugMode)
+                LogDebug("Treblle: circuit breaker tripped — pausing sends for 30s", true);
+        }
+    }
+
     return success;
 }

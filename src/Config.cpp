@@ -67,7 +67,24 @@ static const std::vector<std::string> kDefaultMaskedKeywords = {
     "cc", "card_number", "cardNumber", "ccv", "credit_score", "creditScore", "ssn"
 };
 
+// Path prefixes that are never API traffic regardless of host.
+// Checked case-insensitively via StartsWithCI.
+static const std::vector<std::string> kDefaultExcludedPaths = {
+    "/.well-known/",  // OIDC discovery, JWKS, security.txt
+    "/health",        // /health, /healthz, /health/live, /health/ready
+    "/swagger",       // /swagger-ui, /swagger/v1/swagger.json
+    "/openapi",       // /openapi.json, /openapi/v1
+    "/api-docs",      // alternate JSON API doc paths
+};
+
 } // namespace
+
+std::string Config::MatchDefaultPath(const std::string& urlPath) {
+    for (const auto& prefix : kDefaultExcludedPaths) {
+        if (StartsWithCI(urlPath, prefix)) return prefix;
+    }
+    return {};
+}
 
 // ── LoadFromFile ──────────────────────────────────────────────────────────────
 
