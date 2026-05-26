@@ -33,6 +33,13 @@ std::shared_ptr<const TreblleConfig> Config::Get() const {
     return config_;
 }
 
+std::string Config::MatchDefaultPath(const std::string& urlPath) {
+    for (const auto& prefix : kDefaultExcludedPaths) {
+        if (StartsWithCI(urlPath, prefix)) return prefix;
+    }
+    return {};
+}
+
 bool Config::IsExcluded(const std::string& host, const std::string& urlPath) const {
     auto cfg = Get();
     for (const auto& route : cfg->excludeRoutes) {
@@ -65,6 +72,16 @@ std::string ReadConfigFile(const std::wstring& path) {
 static const std::vector<std::string> kDefaultMaskedKeywords = {
     "password", "pwd", "secret", "password_confirmation", "passwordConfirmation",
     "cc", "card_number", "cardNumber", "ccv", "credit_score", "creditScore", "ssn"
+};
+
+// Path prefixes that are never API traffic regardless of host.
+// Checked case-insensitively via StartsWithCI.
+static const std::vector<std::string> kDefaultExcludedPaths = {
+    "/.well-known/",  // OIDC discovery, JWKS, security.txt
+    "/health",        // /health, /healthz, /health/live, /health/ready
+    "/swagger",       // /swagger-ui, /swagger/v1/swagger.json
+    "/openapi",       // /openapi.json, /openapi/v1
+    "/api-docs",      // alternate JSON API doc paths
 };
 
 } // namespace

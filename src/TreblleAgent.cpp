@@ -273,6 +273,12 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
                                               pRaw->pUnknownVerb,
                                               pRaw->UnknownVerbLength);
 
+        std::string defaultMatch = Config::MatchDefaultPath(path);
+        if (!defaultMatch.empty()) {
+            LogDebug("Treblle: skip — default excluded path prefix \"" + defaultMatch + "\": " + path, dbg);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
+
         if (Config::Instance().IsExcluded(host, path)) {
             LogDebug("Treblle: skip — matched exclude_routes: " + host + path, dbg);
             return RQ_NOTIFICATION_CONTINUE;
