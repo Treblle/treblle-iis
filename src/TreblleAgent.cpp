@@ -200,7 +200,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
         Config::Instance().CheckReload();
         auto cfg = Config::Instance().Get();
 
-        if (!cfg->loaded) return RQ_NOTIFICATION_CONTINUE;
+        if (!cfg->loaded || cfg->disabled) return RQ_NOTIFICATION_CONTINUE;
         bool dbg = cfg->debugMode;
         ctx_.debugMode = dbg;
 

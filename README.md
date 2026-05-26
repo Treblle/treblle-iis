@@ -100,6 +100,7 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
   "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
   "treblle_url": "https://ingress.treblle.com",
   "debug": false,
+  "disabled": false,
   "exclude_routes": [
     { "host": "internal.yourdomain.com" },
     { "host": "api.yourdomain.com", "path": "/health" },
@@ -122,6 +123,7 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
 | `sdk_token` | string |  | **Required.** Your Treblle SDK token. |
 | `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support. |
 | `debug` | bool | `false` | When `true`, errors are written to the Windows Application Event Log (source: `Treblle`). Leave `false` in production. |
+| `disabled` | bool | `false` | When `true`, the agent stops monitoring entirely. Takes effect immediately — no IIS restart needed. |
 | `exclude_routes` | array | `[]` | List of route objects to exclude from monitoring. **Empty = monitor all JSON API traffic.** |
 | `masked_keywords` | array | *(see below)* | List of field names whose values are redacted before sending to Treblle. Omit to use the built-in defaults. Set to `[]` to disable masking entirely. |
 

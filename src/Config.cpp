@@ -88,6 +88,7 @@ bool Config::LoadFromFile() {
         newCfg->sdkToken  = j.value("sdk_token", std::string{});
         newCfg->apiKey    = j.value("api_key",   std::string{});
         newCfg->debugMode = j.value("debug",     false);
+        newCfg->disabled  = j.value("disabled",  false);
 
         std::string url = j.value("treblle_url", std::string{});
         if (!url.empty()) newCfg->treblleUrl = url;
