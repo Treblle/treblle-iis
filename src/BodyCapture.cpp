@@ -46,6 +46,7 @@ void CaptureResponseChunks(HTTP_RESPONSE* pRaw,
                            bool&          truncated) {
     if (!pRaw) return;
 
+    if (!pRaw->pEntityChunks) return;
     for (USHORT i = 0; i < pRaw->EntityChunkCount; ++i) {
         const HTTP_DATA_CHUNK& chunk = pRaw->pEntityChunks[i];
         if (chunk.DataChunkType != HttpDataChunkFromMemory) continue;

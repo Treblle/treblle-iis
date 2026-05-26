@@ -29,4 +29,18 @@ private:
     std::wstring wPath_;
     INTERNET_PORT port_     = 0;
     bool         isHttps_   = false;
+
+    // Circuit breaker: trip open after kTripThreshold consecutive failures;
+    // probe again after kCooldownMs without making further network calls.
+    static constexpr int   kTripThreshold = 5;
+    static constexpr DWORD kCooldownMs    = 30000; // 30 seconds
+
+    int   consecutiveFailures_ = 0;
+    DWORD openedAtMs_          = 0; // GetTickCount() when circuit tripped open
+
+    // 429 backoff: honour Retry-After header; fall back to kRetryAfterDefaultMs.
+    static constexpr DWORD kRetryAfterDefaultMs = 60000; // 60 seconds
+
+    DWORD retryAfterOpenedMs_ = 0; // GetTickCount() when 429 was received
+    DWORD retryAfterDelayMs_  = 0; // milliseconds to wait before retrying
 };

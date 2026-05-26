@@ -118,6 +118,7 @@ if (-not (Test-Path $ConfigDest)) {
   "sdk_token": "$sdkToken",
   "treblle_url": "https://ingress.treblle.com",
   "debug": false,
+  "disabled": false,
   "exclude_routes": [
 $routeJson
   ]

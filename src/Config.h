@@ -11,6 +11,7 @@ struct TreblleConfig {
     std::string              apiKey;      // API project key → sent as project_id in payload
     std::string              treblleUrl  = "https://ingress.treblle.com";
     bool                     debugMode   = false;
+    bool                     disabled    = false;
     std::vector<RouteFilter> excludeRoutes;
     std::vector<std::string> maskedKeywords; // keys whose values are replaced with '*'
     bool                     loaded      = false;
@@ -32,6 +33,10 @@ public:
     // Returns a snapshot of the current config as a shared_ptr.
     // Callers hold the pointer for the duration of the request — no lock needed after Get().
     std::shared_ptr<const TreblleConfig> Get() const;
+
+    // Returns the matched default-excluded path prefix, or empty string if none.
+    // These are built-in and cannot be overridden by config.
+    static std::string MatchDefaultPath(const std::string& urlPath);
 
     // Returns true if the host+path matches an exclude_routes entry.
     bool IsExcluded(const std::string& host, const std::string& urlPath) const;

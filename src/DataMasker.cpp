@@ -16,7 +16,7 @@ static size_t SkipStr(const std::string& s, size_t pos) {
     if (pos >= s.size() || s[pos] != '"') return pos;
     ++pos;
     while (pos < s.size()) {
-        if (s[pos] == '\\') { pos += 2; continue; }
+        if (s[pos] == '\\') { pos += (pos + 1 < s.size()) ? 2 : 1; continue; }
         if (s[pos] == '"')  { return pos + 1; }
         ++pos;
     }

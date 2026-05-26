@@ -67,7 +67,24 @@ static const std::vector<std::string> kDefaultMaskedKeywords = {
     "cc", "card_number", "cardNumber", "ccv", "credit_score", "creditScore", "ssn"
 };
 
+// Path prefixes that are never API traffic regardless of host.
+// Checked case-insensitively via StartsWithCI.
+static const std::vector<std::string> kDefaultExcludedPaths = {
+    "/.well-known/",  // OIDC discovery, JWKS, security.txt
+    "/health",        // /health, /healthz, /health/live, /health/ready
+    "/swagger",       // /swagger-ui, /swagger/v1/swagger.json
+    "/openapi",       // /openapi.json, /openapi/v1
+    "/api-docs",      // alternate JSON API doc paths
+};
+
 } // namespace
+
+std::string Config::MatchDefaultPath(const std::string& urlPath) {
+    for (const auto& prefix : kDefaultExcludedPaths) {
+        if (StartsWithCI(urlPath, prefix)) return prefix;
+    }
+    return {};
+}
 
 // ── LoadFromFile ──────────────────────────────────────────────────────────────
 
@@ -75,11 +92,13 @@ bool Config::LoadFromFile() {
     std::string content = ReadConfigFile(configPath_);
     if (content.empty()) return false;
 
-    // Record mtime before parsing so a bad config suppresses further retries
+    // Read mtime before parsing so a bad config suppresses further retries
     // until the file is saved again (mtime changes).
+    // Store it inside the lock alongside config_ to avoid a race between threads.
     WIN32_FILE_ATTRIBUTE_DATA fa = {};
-    if (GetFileAttributesExW(configPath_.c_str(), GetFileExInfoStandard, &fa))
-        lastWriteTime_ = fa.ftLastWriteTime;
+    FILETIME newWriteTime = {};
+    bool gotMtime = !!GetFileAttributesExW(configPath_.c_str(), GetFileExInfoStandard, &fa);
+    if (gotMtime) newWriteTime = fa.ftLastWriteTime;
 
     try {
         auto j = nlohmann::json::parse(content);
@@ -88,6 +107,7 @@ bool Config::LoadFromFile() {
         newCfg->sdkToken  = j.value("sdk_token", std::string{});
         newCfg->apiKey    = j.value("api_key",   std::string{});
         newCfg->debugMode = j.value("debug",     false);
+        newCfg->disabled  = j.value("disabled",  false);
 
         std::string url = j.value("treblle_url", std::string{});
         if (!url.empty()) newCfg->treblleUrl = url;
@@ -140,6 +160,7 @@ bool Config::LoadFromFile() {
 
         std::lock_guard<std::mutex> lock(mutex_);
         config_ = std::move(newCfg);
+        if (gotMtime) lastWriteTime_ = newWriteTime;
         return true;
 
     } catch (const nlohmann::json::exception& e) {
