@@ -5,6 +5,9 @@ AsyncQueue::AsyncQueue()
     : semaphore_(CreateSemaphoreW(nullptr, 0, static_cast<LONG>(kMaxSize * 2), nullptr))
     , hShutdown_(CreateEventW(nullptr, TRUE, FALSE, nullptr))  // manual-reset, initially unset
     , shutdown_(false) {
+    // If handle creation fails, Push/Pop will see null handles and do nothing
+    // rather than crashing — WaitForMultipleObjects rejects null handles so
+    // we guard it in Pop() below.
 }
 
 AsyncQueue::~AsyncQueue() {
@@ -14,6 +17,7 @@ AsyncQueue::~AsyncQueue() {
 
 void AsyncQueue::Push(std::string payload) {
     if (shutdown_.load(std::memory_order_relaxed)) return;
+    if (!semaphore_) return;
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (queue_.size() >= kMaxSize)
@@ -24,6 +28,7 @@ void AsyncQueue::Push(std::string payload) {
 }
 
 bool AsyncQueue::Pop(std::string& out, DWORD timeoutMs) {
+    if (!semaphore_ || !hShutdown_) return false;
     HANDLE handles[2] = { semaphore_, hShutdown_ };
     DWORD wait = WaitForMultipleObjects(2, handles, FALSE, timeoutMs);
 

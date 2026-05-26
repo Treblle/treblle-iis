@@ -26,19 +26,27 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID) {
 // ── Background worker ─────────────────────────────────────────────────────────
 
 static DWORD WINAPI WorkerThreadProc(LPVOID) {
-    HttpSender sender;
-    while (true) {
+    try {
+        LogDebug("Treblle: worker thread started", true);
+        HttpSender sender;
+        while (true) {
+            std::string payload;
+            // INFINITE: sleep until a payload arrives or Shutdown() fires the event
+            if (!g_pQueue->Pop(payload, INFINITE)) break;
+            auto cfg = Config::Instance().Get();
+            LogDebug("Treblle: worker dequeued payload (" + std::to_string(payload.size()) + " bytes)", cfg->debugMode);
+            sender.Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
+        }
+        // Drain any payloads already in the queue before exiting
+        LogDebug("Treblle: worker thread shutting down — draining queue", true);
         std::string payload;
-        // INFINITE: sleep until a payload arrives or Shutdown() fires the event
-        if (!g_pQueue->Pop(payload, INFINITE)) break;
-        auto cfg = Config::Instance().Get();
-        sender.Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
-    }
-    // Drain any payloads already in the queue before exiting
-    std::string payload;
-    while (g_pQueue->Pop(payload, 0)) {
-        auto cfg = Config::Instance().Get();
-        HttpSender().Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
+        while (g_pQueue->Pop(payload, 0)) {
+            auto cfg = Config::Instance().Get();
+            HttpSender().Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
+        }
+        LogDebug("Treblle: worker thread exiting", true);
+    } catch (...) {
+        LogDebug("Treblle: unhandled exception in worker thread — thread exiting", true);
     }
     return 0;
 }
@@ -54,12 +62,21 @@ HRESULT CTreblleAgentFactory::GetHttpModule(OUT CHttpModule** ppModule,
 void CTreblleAgentFactory::Terminate() {
     if (g_pQueue) g_pQueue->Shutdown();
     if (g_hWorkerThread) {
-        WaitForSingleObject(g_hWorkerThread, TreblleConst::kShutdownDrainMs);
+        DWORD waitResult = WaitForSingleObject(g_hWorkerThread, TreblleConst::kShutdownDrainMs);
         CloseHandle(g_hWorkerThread);
         g_hWorkerThread = nullptr;
+        if (waitResult == WAIT_OBJECT_0) {
+            // Thread exited cleanly — safe to delete queue
+            delete g_pQueue;
+            g_pQueue = nullptr;
+        } else {
+            // Thread did not exit in time — leave queue alive to prevent crash
+            LogDebug("Treblle: worker thread did not exit within drain timeout — leaking queue to prevent crash", true);
+        }
+    } else {
+        delete g_pQueue;
+        g_pQueue = nullptr;
     }
-    delete g_pQueue;
-    g_pQueue = nullptr;
     delete this;
 }
 
@@ -68,30 +85,71 @@ void CTreblleAgentFactory::Terminate() {
 HRESULT __stdcall RegisterModule(DWORD,
                                   IHttpModuleRegistrationInfo* pInfo,
                                   IHttpServer*) {
-    WCHAR dllPath[MAX_PATH] = {};
-    GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
+    try {
+        WCHAR dllPath[MAX_PATH] = {};
+        GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
 
-    bool loaded = Config::Instance().Load(dllPath);
-    auto cfg    = Config::Instance().Get();
-    bool dbg    = cfg->debugMode;
+        char narrowPath[MAX_PATH] = {};
+        WideCharToMultiByte(CP_UTF8, 0, dllPath, -1, narrowPath, MAX_PATH, nullptr, nullptr);
 
-    char narrowPath[MAX_PATH] = {};
-    WideCharToMultiByte(CP_UTF8, 0, dllPath, -1, narrowPath, MAX_PATH, nullptr, nullptr);
-    LogDebug(std::string("RegisterModule — DLL path: ") + narrowPath, dbg);
-    LogDebug(std::string("Config loaded: ") + (loaded ? "true" : "false"), dbg);
-    LogDebug("Excluded routes count: " + std::to_string(cfg->excludeRoutes.size()), dbg);
+        // Always log startup — debug flag not yet known, use raw Event Log write
+        LogDebug(std::string("Treblle: RegisterModule starting — DLL: ") + narrowPath, true);
 
-    g_pQueue = new(std::nothrow) AsyncQueue();
-    if (!g_pQueue) return E_OUTOFMEMORY;
-    g_hWorkerThread = CreateThread(nullptr, 0, WorkerThreadProc, nullptr, 0, nullptr);
+        bool loaded = Config::Instance().Load(dllPath);
+        auto cfg    = Config::Instance().Get();
+        bool dbg    = cfg->debugMode;
 
-    HRESULT hr = pInfo->SetRequestNotifications(
-        new(std::nothrow) CTreblleAgentFactory(),
-        RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
-        0);
+        LogDebug(std::string("Treblle: config loaded: ") + (loaded ? "true" : "false"), true);
+        if (loaded) {
+            LogDebug("Treblle: debug=" + std::string(dbg ? "true" : "false")
+                + " disabled=" + std::string(cfg->disabled ? "true" : "false")
+                + " excludeRoutes=" + std::to_string(cfg->excludeRoutes.size())
+                + " maskedKeywords=" + std::to_string(cfg->maskedKeywords.size()), true);
+        }
 
-    LogDebug(std::string("SetRequestNotifications hr=") + std::to_string(hr), dbg);
-    return hr;
+        g_pQueue = new(std::nothrow) AsyncQueue();
+        if (!g_pQueue) {
+            LogDebug("Treblle: failed to allocate AsyncQueue — E_OUTOFMEMORY", true);
+            return E_OUTOFMEMORY;
+        }
+        LogDebug("Treblle: AsyncQueue created", dbg);
+
+        g_hWorkerThread = CreateThread(nullptr, 0, WorkerThreadProc, nullptr, 0, nullptr);
+        if (!g_hWorkerThread) {
+            LogDebug("Treblle: CreateThread failed — worker will not run", true);
+        } else {
+            LogDebug("Treblle: worker thread created", dbg);
+        }
+
+        auto* pFactory = new(std::nothrow) CTreblleAgentFactory();
+        if (!pFactory) {
+            LogDebug("Treblle: failed to allocate CTreblleAgentFactory — E_OUTOFMEMORY", true);
+            if (g_pQueue) { g_pQueue->Shutdown(); delete g_pQueue; g_pQueue = nullptr; }
+            return E_OUTOFMEMORY;
+        }
+
+        HRESULT hr = pInfo->SetRequestNotifications(
+            pFactory,
+            RQ_BEGIN_REQUEST | RQ_SEND_RESPONSE | RQ_END_REQUEST,
+            0);
+
+        LogDebug("Treblle: SetRequestNotifications hr=0x" + [hr](){
+            char buf[16]; snprintf(buf, sizeof(buf), "%08lX", hr); return std::string(buf);
+        }(), true);
+
+        if (FAILED(hr)) {
+            LogDebug("Treblle: SetRequestNotifications failed — cleaning up", true);
+            if (g_pQueue) { g_pQueue->Shutdown(); delete g_pQueue; g_pQueue = nullptr; }
+            if (g_hWorkerThread) { CloseHandle(g_hWorkerThread); g_hWorkerThread = nullptr; }
+            return hr;
+        }
+
+        LogDebug("Treblle: RegisterModule complete", true);
+        return hr;
+    } catch (...) {
+        LogDebug("Treblle: unhandled exception in RegisterModule", true);
+        return E_FAIL;
+    }
 }
 
 // ── Header collection helper ──────────────────────────────────────────────────
@@ -185,8 +243,9 @@ std::string CTreblleAgent::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) 
                      && _strnicmp(pHttps, "on", 2) == 0;
     std::string scheme = isSecure ? "https" : "http";
 
-    PCSTR pHost = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
-    std::string host = pHost ? pHost : "";
+    PCSTR  pHost    = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
+    USHORT hostLen  = pRaw->Headers.KnownHeaders[HttpHeaderHost].RawValueLength;
+    std::string host = (pHost && hostLen > 0) ? std::string(pHost, hostLen) : "";
 
     std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
     return scheme + "://" + host + rawUrl;
@@ -200,13 +259,23 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
         Config::Instance().CheckReload();
         auto cfg = Config::Instance().Get();
 
-        if (!cfg->loaded) return RQ_NOTIFICATION_CONTINUE;
+        if (!cfg->loaded) {
+            LogDebug("Treblle: OnBeginRequest — config not loaded, skipping", true);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
+        if (cfg->disabled) {
+            LogDebug("Treblle: OnBeginRequest — agent disabled, skipping", cfg->debugMode);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
         bool dbg = cfg->debugMode;
         ctx_.debugMode = dbg;
 
         IHttpRequest* pReq = pCtx->GetRequest();
         HTTP_REQUEST* pRaw = pReq->GetRawHttpRequest();
-        if (!pRaw) return RQ_NOTIFICATION_CONTINUE;
+        if (!pRaw) {
+            LogDebug("Treblle: OnBeginRequest — null raw request, skipping", dbg);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
 
         PCSTR pHostRaw = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
         std::string host = pHostRaw ? ToLower(pHostRaw) : "";
@@ -216,22 +285,24 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
         std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
         std::string path   = ParseQueryPath(rawUrl);
 
+        std::string method = GetMethodString(pRaw->Verb,
+                                              pRaw->pUnknownVerb,
+                                              pRaw->UnknownVerbLength);
+
+        LogDebug("Treblle: OnBeginRequest — " + method + " " + host + path, dbg);
+
         if (Config::Instance().IsExcluded(host, path)) {
-            LogDebug("skip host=" + host + " url=" + path + " — matched exclude_routes", dbg);
+            LogDebug("Treblle: skip — matched exclude_routes: " + host + path, dbg);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
+
+        if (!IsTrackedMethod(method)) {
+            LogDebug("Treblle: skip — method not tracked: " + method, dbg);
             return RQ_NOTIFICATION_CONTINUE;
         }
 
         ctx_.internalId   = ComputeHostId(host);
         ctx_.internalName = host;
-
-        std::string method = GetMethodString(pRaw->Verb,
-                                              pRaw->pUnknownVerb,
-                                              pRaw->UnknownVerbLength);
-        if (!IsTrackedMethod(method)) {
-            LogDebug("skip host=" + host + " url=" + path + " — method " + method + " not tracked", dbg);
-            return RQ_NOTIFICATION_CONTINUE;
-        }
-
         ctx_.shouldTrack = true;
         QueryPerformanceFrequency(&ctx_.frequency);
         QueryPerformanceCounter(&ctx_.startTime);
@@ -253,12 +324,21 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
 
         if (ct.find("application/json") != std::string::npos) {
             ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
+            LogDebug("Treblle: request body captured (" + std::to_string(ctx_.requestBody.size()) + " bytes"
+                + (ctx_.requestBodyTruncated ? ", truncated" : "") + ")", dbg);
         } else if (ct.find("multipart/form-data") != std::string::npos) {
             PCSTR pCL = pRaw->Headers.KnownHeaders[HttpHeaderContentLength].pRawValue;
             LONGLONG cl = pCL ? _atoi64(pCL) : 0;
             ctx_.requestBody = SummarizeMultipartBody(pCtx, pCT, cl);
+            LogDebug("Treblle: multipart request summarized", dbg);
+        } else {
+            LogDebug("Treblle: request content-type=\"" + ct + "\" — no body capture", dbg);
         }
-    } catch (...) {}
+
+        LogDebug("Treblle: OnBeginRequest — tracking enabled for " + method + " " + host + path, dbg);
+    } catch (...) {
+        LogDebug("Treblle: unhandled exception in OnBeginRequest", true);
+    }
 
     return RQ_NOTIFICATION_CONTINUE;
 }
@@ -271,15 +351,18 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
     try {
         IHttpResponse* pResp = pCtx->GetResponse();
         HTTP_RESPONSE* pRaw  = pResp->GetRawHttpResponse();
-        if (!pRaw) return RQ_NOTIFICATION_CONTINUE;
+        if (!pRaw) {
+            LogDebug("Treblle: OnSendResponse — null raw response, skipping", ctx_.debugMode);
+            return RQ_NOTIFICATION_CONTINUE;
+        }
 
         if (!ctx_.responseHeadersDone) {
             PCSTR pCT  = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
             std::string ct = pCT ? ToLower(pCT) : "";
             bool isJson = ct.find("application/json") != std::string::npos;
             if (!isJson) {
-                LogDebug("skip host=" + ctx_.internalName + " url=" + ctx_.routePath
-                    + " — response Content-Type \"" + ct + "\" is not JSON", ctx_.debugMode);
+                LogDebug("Treblle: skip — response Content-Type \"" + ct + "\" is not JSON: "
+                    + ctx_.internalName + ctx_.routePath, ctx_.debugMode);
                 ctx_.shouldTrack = false;
                 return RQ_NOTIFICATION_CONTINUE;
             }
@@ -288,10 +371,19 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
             ctx_.statusCode = status;
             CollectResponseHeaders(pRaw);
             ctx_.responseHeadersDone = true;
+            LogDebug("Treblle: OnSendResponse — status=" + std::to_string(status)
+                + " content-type=" + ct, ctx_.debugMode);
         }
 
+        size_t before = ctx_.responseBody.size();
         CaptureResponseChunks(pRaw, ctx_.responseBody, ctx_.responseSize, ctx_.responseBodyTruncated);
-    } catch (...) {}
+        size_t captured = ctx_.responseBody.size() - before;
+        if (captured > 0)
+            LogDebug("Treblle: response chunk captured (" + std::to_string(captured) + " bytes"
+                + (ctx_.responseBodyTruncated ? ", truncated" : "") + ")", ctx_.debugMode);
+    } catch (...) {
+        LogDebug("Treblle: unhandled exception in OnSendResponse", true);
+    }
 
     return RQ_NOTIFICATION_CONTINUE;
 }
@@ -311,11 +403,24 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnEndRequest(
                          / static_cast<double>(ctx_.frequency.QuadPart) * 1000.0;
         }
 
+        LogDebug("Treblle: OnEndRequest — building payload for " + ctx_.method
+            + " " + ctx_.internalName + ctx_.routePath
+            + " (" + [loadTimeMs](){ char b[32]; snprintf(b,sizeof(b),"%.2f",loadTimeMs); return std::string(b); }() + "ms)", ctx_.debugMode);
+
         auto cfg = Config::Instance().Get();
         std::string payload = PayloadBuilder::Build(ctx_, *cfg, loadTimeMs, GetIISVersion(pCtx));
 
-        if (g_pQueue) g_pQueue->Push(std::move(payload));
-    } catch (...) {}
+        LogDebug("Treblle: payload built (" + std::to_string(payload.size()) + " bytes)", ctx_.debugMode);
+
+        if (g_pQueue) {
+            g_pQueue->Push(std::move(payload));
+            LogDebug("Treblle: payload queued", ctx_.debugMode);
+        } else {
+            LogDebug("Treblle: queue is null — payload dropped", true);
+        }
+    } catch (...) {
+        LogDebug("Treblle: unhandled exception in OnEndRequest", true);
+    }
 
     return RQ_NOTIFICATION_CONTINUE;
 }

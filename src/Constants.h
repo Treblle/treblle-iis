@@ -23,8 +23,9 @@ namespace TreblleConst {
     constexpr size_t kQueueMaxSize         = 5000;
 
     // WinHTTP (all in milliseconds)
-    constexpr uint32_t kHttpTimeoutMs      = 10000;
+    constexpr uint32_t kHttpTimeoutMs      = 5000;
 
-    // Shutdown: how long the factory waits for the worker to drain
-    constexpr uint32_t kShutdownDrainMs    = 5000;
+    // Shutdown: how long the factory waits for the worker to drain.
+    // Must exceed kHttpTimeoutMs so the worker can finish its last send before Terminate() gives up.
+    constexpr uint32_t kShutdownDrainMs    = 8000;
 }

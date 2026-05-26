@@ -75,11 +75,13 @@ bool Config::LoadFromFile() {
     std::string content = ReadConfigFile(configPath_);
     if (content.empty()) return false;
 
-    // Record mtime before parsing so a bad config suppresses further retries
+    // Read mtime before parsing so a bad config suppresses further retries
     // until the file is saved again (mtime changes).
+    // Store it inside the lock alongside config_ to avoid a race between threads.
     WIN32_FILE_ATTRIBUTE_DATA fa = {};
-    if (GetFileAttributesExW(configPath_.c_str(), GetFileExInfoStandard, &fa))
-        lastWriteTime_ = fa.ftLastWriteTime;
+    FILETIME newWriteTime = {};
+    bool gotMtime = !!GetFileAttributesExW(configPath_.c_str(), GetFileExInfoStandard, &fa);
+    if (gotMtime) newWriteTime = fa.ftLastWriteTime;
 
     try {
         auto j = nlohmann::json::parse(content);
@@ -140,6 +142,7 @@ bool Config::LoadFromFile() {
 
         std::lock_guard<std::mutex> lock(mutex_);
         config_ = std::move(newCfg);
+        if (gotMtime) lastWriteTime_ = newWriteTime;
         return true;
 
     } catch (const nlohmann::json::exception& e) {

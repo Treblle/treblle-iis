@@ -110,8 +110,11 @@ std::string GetClientIP(IHttpContext* pCtx) {
             size_t comma = val.find(',');
             if (comma != std::string::npos) val = val.substr(0, comma);
             // Trim whitespace
-            val.erase(0, val.find_first_not_of(" \t"));
-            val.erase(val.find_last_not_of(" \t") + 1);
+            size_t first = val.find_first_not_of(" \t");
+            if (first == std::string::npos) continue;
+            val.erase(0, first);
+            size_t last = val.find_last_not_of(" \t");
+            if (last != std::string::npos) val.erase(last + 1);
             if (IsValidIP(val)) return val;
         }
     }
