@@ -151,11 +151,13 @@ static void FillHeaderMap(const THeaders&                     hdrs,
         if (val && len > 0)
             out[known[i].name] = std::string(val, len);
     }
-    for (USHORT i = 0; i < hdrs.UnknownHeaderCount; ++i) {
-        const HTTP_UNKNOWN_HEADER& uh = hdrs.pUnknownHeaders[i];
-        if (uh.pName && uh.NameLength > 0 && uh.pRawValue && uh.RawValueLength > 0)
-            out[ToLower(std::string(uh.pName, uh.NameLength))] =
-                std::string(uh.pRawValue, uh.RawValueLength);
+    if (hdrs.pUnknownHeaders) {
+        for (USHORT i = 0; i < hdrs.UnknownHeaderCount; ++i) {
+            const HTTP_UNKNOWN_HEADER& uh = hdrs.pUnknownHeaders[i];
+            if (uh.pName && uh.NameLength > 0 && uh.pRawValue && uh.RawValueLength > 0)
+                out[ToLower(std::string(uh.pName, uh.NameLength))] =
+                    std::string(uh.pRawValue, uh.RawValueLength);
+        }
     }
 }
 
