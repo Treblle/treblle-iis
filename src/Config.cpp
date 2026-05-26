@@ -33,13 +33,6 @@ std::shared_ptr<const TreblleConfig> Config::Get() const {
     return config_;
 }
 
-std::string Config::MatchDefaultPath(const std::string& urlPath) {
-    for (const auto& prefix : kDefaultExcludedPaths) {
-        if (StartsWithCI(urlPath, prefix)) return prefix;
-    }
-    return {};
-}
-
 bool Config::IsExcluded(const std::string& host, const std::string& urlPath) const {
     auto cfg = Get();
     for (const auto& route : cfg->excludeRoutes) {
@@ -85,6 +78,13 @@ static const std::vector<std::string> kDefaultExcludedPaths = {
 };
 
 } // namespace
+
+std::string Config::MatchDefaultPath(const std::string& urlPath) {
+    for (const auto& prefix : kDefaultExcludedPaths) {
+        if (StartsWithCI(urlPath, prefix)) return prefix;
+    }
+    return {};
+}
 
 // ── LoadFromFile ──────────────────────────────────────────────────────────────
 
