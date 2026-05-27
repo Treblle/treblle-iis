@@ -59,6 +59,12 @@ msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64
 
 > **Pre-built release:** Download `TreblleAgent.dll` from the [Releases](../../releases) page and skip this step.
 
+> **Downloaded from Releases?** Windows marks files downloaded from the internet as blocked and IIS may refuse to load them. Before running the installer, unblock the DLL:
+> ```powershell
+> Unblock-File -Path "TreblleAgent.dll"
+> ```
+> Alternatively: right-click the file → **Properties** → tick **Unblock** → **OK**.
+
 ### Step 2 - Run the installer
 
 Copy `TreblleAgent.dll` into the `installer\` directory (or build in place), then run:
@@ -69,12 +75,47 @@ cd path\to\treblle-iis\installer
 .\install.ps1
 ```
 
+> **Script blocked?** If PowerShell refuses to run with *"running scripts is disabled on this system"*, allow scripts for the current session and retry:
+> ```powershell
+> Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+> .\install.ps1
+> ```
+> The `-Scope Process` flag applies only to the current window and reverts when the session closes — no permanent system change is made.
+
 The installer will:
 - Copy `TreblleAgent.dll` to `C:\iismodules\treblle\`
 - Prompt you for your **API Key**, **SDK Token**, and optional exclusion patterns
 - Write `C:\iismodules\treblle\treblle.config`
 - Register the agent globally in IIS
 - Restart IIS
+
+### Optional: Grant app-pool read permissions
+
+On some servers the new `C:\iismodules\treblle\` directory does not inherit ACEs for IIS worker-process accounts, which prevents the DLL from loading. If IIS fails to start or the module never appears after installation, grant read and execute access:
+
+```powershell
+# Recommended — covers every application pool via the built-in IIS_IUSRS group
+icacls "C:\iismodules\treblle" /grant "IIS_IUSRS:(OI)(CI)RX" /T
+
+# Alternative — grant a single named application pool only
+icacls "C:\iismodules\treblle" /grant "IIS AppPool\DefaultAppPool:(OI)(CI)RX" /T
+```
+
+Replace `DefaultAppPool` with the name of your app pool. To list all pools:
+
+```powershell
+%windir%\system32\inetsrv\appcmd.exe list apppool
+```
+
+After granting permissions, restart IIS:
+
+```powershell
+iisreset
+```
+
+The `(OI)(CI)` flags make the ACE inherit to all files and subdirectories. `RX` grants Read + Execute, which is required for Windows to load a DLL into the worker process.
+
+---
 
 ### Step 3 - Verify
 
