@@ -40,6 +40,24 @@ jobs:
       - name: Build Release x64
         run: msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64 /m
 
+      - name: Set up DigiCert smtools
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        uses: digicert/smtools-actions@v1
+        with:
+          version: latest
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+
+      - name: Sign DLL
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        run: smctl sign --fingerprint "${{ secrets.SM_CERT_FINGERPRINT }}" --input x64/Release/TreblleAgent.dll
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4
         with:
