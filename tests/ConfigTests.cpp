@@ -168,3 +168,26 @@ TEST_F(ConfigTest, IsExcluded_EmptyRoutes_NeverExcluded) {
     Config::Instance().Load(dllPath_);
     EXPECT_FALSE(Config::Instance().IsExcluded("anything.com", "/path"));
 }
+
+TEST_F(ConfigTest, IsExcluded_HostWithPort_MatchesOnlyThatPort) {
+    WriteConfig(R"({
+        "api_key": "k", "sdk_token": "t",
+        "exclude_routes": [{"host": "api.example.com:8080"}]
+    })");
+    Config::Instance().Load(dllPath_);
+
+    EXPECT_TRUE(Config::Instance().IsExcluded("api.example.com:8080", "/any"));
+    EXPECT_FALSE(Config::Instance().IsExcluded("api.example.com:9090", "/any"));
+    EXPECT_FALSE(Config::Instance().IsExcluded("api.example.com", "/any"));
+}
+
+TEST_F(ConfigTest, IsExcluded_HostWithoutPort_DoesNotMatchWithPort) {
+    WriteConfig(R"({
+        "api_key": "k", "sdk_token": "t",
+        "exclude_routes": [{"host": "api.example.com"}]
+    })");
+    Config::Instance().Load(dllPath_);
+
+    EXPECT_TRUE(Config::Instance().IsExcluded("api.example.com", "/any"));
+    EXPECT_FALSE(Config::Instance().IsExcluded("api.example.com:8080", "/any"));
+}
