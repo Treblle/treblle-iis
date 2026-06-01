@@ -221,6 +221,35 @@ void CTreblleAgent::CollectResponseHeaders(HTTP_RESPONSE* pRaw) {
     FillHeaderMap(pRaw->Headers, ctx_.responseHeaders, kKnown, ARRAYSIZE(kKnown));
 }
 
+static std::string ResolveInternalName(IHttpContext* pCtx, const std::string& host) {
+    // 1. IIS site name — human-readable name set in IIS Manager
+    IHttpSite* pSite = pCtx->GetSite();
+    if (pSite) {
+        PCWSTR pwName = pSite->GetSiteName();
+        if (pwName && pwName[0] != L'\0') {
+            int len = WideCharToMultiByte(CP_UTF8, 0, pwName, -1, nullptr, 0, nullptr, nullptr);
+            if (len > 1) {
+                std::string name(len - 1, '\0');
+                WideCharToMultiByte(CP_UTF8, 0, pwName, -1, &name[0], len, nullptr, nullptr);
+                return name;
+            }
+        }
+    }
+
+    // 2. App pool ID
+    PCSTR  pPool = nullptr;
+    DWORD  cbPool = 0;
+    if (SUCCEEDED(pCtx->GetServerVariable("APP_POOL_ID", &pPool, &cbPool))
+        && pPool && cbPool > 0) {
+        return std::string(pPool, cbPool);
+    }
+
+    // 3. Host header
+    if (!host.empty()) return host;
+
+    return "";
+}
+
 std::string CTreblleAgent::BuildFullUrl(IHttpContext* pCtx, HTTP_REQUEST* pRaw) {
     DWORD  cbHttps = 0;
     PCSTR  pHttps  = nullptr;
@@ -265,8 +294,6 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
 
         PCSTR pHostRaw = pRaw->Headers.KnownHeaders[HttpHeaderHost].pRawValue;
         std::string host = pHostRaw ? ToLower(pHostRaw) : "";
-        size_t colon = host.rfind(':');
-        if (colon != std::string::npos) host = host.substr(0, colon);
 
         std::string rawUrl = pRaw->pRawUrl ? pRaw->pRawUrl : "";
         std::string path   = ParseQueryPath(rawUrl);
@@ -292,7 +319,7 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
         }
 
         ctx_.internalId   = ComputeHostId(host);
-        ctx_.internalName = host;
+        ctx_.internalName = ResolveInternalName(pCtx, host);
         ctx_.shouldTrack = true;
         QueryPerformanceFrequency(&ctx_.frequency);
         QueryPerformanceCounter(&ctx_.startTime);

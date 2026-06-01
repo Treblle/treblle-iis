@@ -143,3 +143,15 @@ TEST(Utils, ComputeHostId_UUIDFormat) {
     EXPECT_EQ(id[18], '-');
     EXPECT_EQ(id[23], '-');
 }
+
+TEST(Utils, ComputeHostId_SameHostDifferentPorts_DifferentIds) {
+    EXPECT_NE(ComputeHostId("api.example.com:8080"), ComputeHostId("api.example.com:9090"));
+}
+
+TEST(Utils, ComputeHostId_HostWithoutPort_StableId) {
+    EXPECT_EQ(ComputeHostId("api.example.com"), ComputeHostId("api.example.com"));
+}
+
+TEST(Utils, ComputeHostId_HostWithPortVsWithout_DifferentIds) {
+    EXPECT_NE(ComputeHostId("api.example.com"), ComputeHostId("api.example.com:8080"));
+}
