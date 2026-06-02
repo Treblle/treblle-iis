@@ -93,8 +93,9 @@ bool HttpSender::Send(const std::string& jsonPayload,
             LogDebug("Treblle: circuit breaker probing after cooldown", true);
     }
 
-    if (debugMode)
+    if (debugMode) {
         LogDebug("Treblle: sending payload (" + std::to_string(jsonPayload.size()) + " bytes)", true);
+    }
 
     if (!EnsureConnected(url, debugMode)) return false;
 
@@ -138,6 +139,11 @@ bool HttpSender::Send(const std::string& jsonPayload,
 
     if (ok) {
         ok = WinHttpReceiveResponse(hReq, nullptr);
+        if (!ok && debugMode) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Treblle: WinHttpReceiveResponse failed (0x%08lX)", GetLastError());
+            LogDebug(msg, true);
+        }
         if (ok) {
             DWORD statusSize = sizeof(statusCode);
             WinHttpQueryHeaders(hReq,
@@ -146,6 +152,11 @@ bool HttpSender::Send(const std::string& jsonPayload,
                                 &statusCode, &statusSize,
                                 WINHTTP_NO_HEADER_INDEX);
             success = (statusCode >= 200 && statusCode < 300);
+            if (debugMode) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Treblle: ingress responded HTTP %lu", statusCode);
+                LogDebug(msg, true);
+            }
 
             if (statusCode == 429) {
                 // Read Retry-After (numeric seconds); fall back to default.
@@ -165,10 +176,6 @@ bool HttpSender::Send(const std::string& jsonPayload,
                              "Treblle: 429 received — backing off for %lu s", delaySec);
                     LogDebug(msg, true);
                 }
-            } else if (!success && debugMode) {
-                char msg[64];
-                snprintf(msg, sizeof(msg), "Treblle: ingress returned HTTP %lu", statusCode);
-                LogDebug(msg, true);
             }
 
             // Drain response body to allow the connection to be reused via keep-alive.
