@@ -6,7 +6,7 @@
 // Include this directly in .cpp files that need it — do NOT add to precomp.h.
 namespace TreblleConst {
     // SDK identity sent in every payload
-    constexpr const char* kSdkName         = "Netcore";
+    constexpr const char* kSdkName         = "iis";
     constexpr const char* kSdkVersion      = "1.0.0";
     constexpr int         kApiVersion      = 20;
 

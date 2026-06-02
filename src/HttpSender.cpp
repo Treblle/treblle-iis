@@ -95,7 +95,6 @@ bool HttpSender::Send(const std::string& jsonPayload,
 
     if (debugMode) {
         LogDebug("Treblle: sending payload (" + std::to_string(jsonPayload.size()) + " bytes)", true);
-        LogDebug("Treblle: payload: " + jsonPayload, true);
     }
 
     if (!EnsureConnected(url, debugMode)) return false;
