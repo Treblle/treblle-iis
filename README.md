@@ -349,6 +349,11 @@ Common log entries:
 
 ## Troubleshooting
 
+> **No data showing up in Treblle?** See **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — a
+> step-by-step FAQ covering every reason a request is skipped, with copy-paste PowerShell
+> checks for module registration, DLL loading, config validation, firewall/proxy/TLS, and
+> a one-shot diagnostic script.
+
 **Agent doesn't appear in `appcmd list module`**
 
 - Confirm you ran the installer as Administrator
