@@ -60,6 +60,56 @@ TEST_F(ConfigTest, Load_MissingTreblleUrl_UsesDefault) {
     EXPECT_EQ(Config::Instance().Get()->treblleUrl, "https://ingress.treblle.com");
 }
 
+// ── secondary_treblle_url ─────────────────────────────────────────────────────
+
+TEST_F(ConfigTest, Load_MissingSecondaryUrl_DisabledByDefault) {
+    WriteConfig(R"({"api_key":"k","sdk_token":"t"})");
+    Config::Instance().Load(dllPath_);
+    auto cfg = Config::Instance().Get();
+    EXPECT_TRUE(cfg->secondaryTreblleUrl.empty());
+    EXPECT_FALSE(cfg->HasSecondaryDestination());
+}
+
+TEST_F(ConfigTest, Load_SecondaryUrl_Parsed) {
+    WriteConfig(R"({
+        "api_key": "k", "sdk_token": "t",
+        "treblle_url": "https://onprem.example.com/treblle",
+        "secondary_treblle_url": "https://ingress.treblle.com"
+    })");
+    Config::Instance().Load(dllPath_);
+    auto cfg = Config::Instance().Get();
+
+    EXPECT_EQ(cfg->treblleUrl,          "https://onprem.example.com/treblle");
+    EXPECT_EQ(cfg->secondaryTreblleUrl, "https://ingress.treblle.com");
+    EXPECT_TRUE(cfg->HasSecondaryDestination());
+}
+
+TEST_F(ConfigTest, Load_SecondaryUrl_SameAsPrimary_Ignored) {
+    WriteConfig(R"({
+        "api_key": "k", "sdk_token": "t",
+        "treblle_url": "https://ingress.treblle.com",
+        "secondary_treblle_url": "https://ingress.treblle.com"
+    })");
+    Config::Instance().Load(dllPath_);
+    auto cfg = Config::Instance().Get();
+
+    EXPECT_TRUE(cfg->secondaryTreblleUrl.empty());
+    EXPECT_FALSE(cfg->HasSecondaryDestination());
+}
+
+TEST_F(ConfigTest, Load_SecondaryUrl_SameAsDefaultPrimary_Ignored) {
+    // treblle_url omitted entirely — defaults to https://ingress.treblle.com.
+    // Setting secondary to that same default must still be treated as a duplicate.
+    WriteConfig(R"({
+        "api_key": "k", "sdk_token": "t",
+        "secondary_treblle_url": "https://ingress.treblle.com"
+    })");
+    Config::Instance().Load(dllPath_);
+    auto cfg = Config::Instance().Get();
+
+    EXPECT_FALSE(cfg->HasSecondaryDestination());
+}
+
 TEST_F(ConfigTest, Load_DebugFalse_Default) {
     WriteConfig(R"({"api_key":"k","sdk_token":"t"})");
     Config::Instance().Load(dllPath_);
