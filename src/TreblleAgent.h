@@ -38,7 +38,9 @@ public:
     void Terminate() override;
 };
 
-// Global state shared between RegisterModule and the background worker.
+// Global state shared between RegisterModule and the background worker(s).
 extern AsyncQueue* g_pQueue;
 extern HANDLE      g_hWorkerThread;
+extern AsyncQueue* g_pSecondaryQueue;
+extern HANDLE      g_hSecondaryWorkerThread;
 extern HMODULE     g_hModule;

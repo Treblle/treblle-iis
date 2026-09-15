@@ -140,6 +140,7 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
   "api_key":    "YOUR_TREBLLE_API_KEY",
   "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
   "treblle_url": "https://ingress.treblle.com",
+  "secondary_treblle_url": "",
   "debug": false,
   "disabled": false,
   "exclude_routes": [
@@ -162,7 +163,8 @@ The config file lives at `C:\iismodules\treblle\treblle.config`. **Edits take ef
 |-------|------|---------|-------------|
 | `api_key` | string |  | **Required.** Your Treblle API key. |
 | `sdk_token` | string |  | **Required.** Your Treblle SDK token. |
-| `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support. |
+| `treblle_url` | string | `https://ingress.treblle.com` | Treblle ingress endpoint. Override only if directed by Treblle support, or to point at an on-prem Treblle instance. |
+| `secondary_treblle_url` | string | *(empty — disabled)* | Optional second ingress endpoint. When set, every tracked request is **also** mirrored here, using the same `api_key`/`sdk_token` as above. See [Sending to two destinations](#sending-to-two-destinations). |
 | `debug` | bool | `false` | When `true`, errors are written to the Windows Application Event Log (source: `Treblle`). Leave `false` in production. |
 | `disabled` | bool | `false` | When `true`, the agent stops monitoring entirely. Takes effect immediately — no IIS restart needed. |
 | `exclude_routes` | array | `[]` | List of route objects to exclude from monitoring. **Empty = monitor all JSON API traffic.** |
@@ -174,6 +176,35 @@ Each object in `exclude_routes`:
 |-------|------|----------|-------------|
 | `host` | string | Yes | Hostname to exclude (case-insensitive). Must match the HTTP `Host` header, excluding port. |
 | `path` | string | No | URL path prefix to exclude (case-insensitive). If omitted, the entire host is excluded. |
+
+---
+
+## Sending to two destinations
+
+By default the agent sends to a single Treblle ingress endpoint. There are three ways to configure it:
+
+1. **Cloud only (default).** Leave `treblle_url` unset, or set it to `https://ingress.treblle.com`. Nothing else to configure.
+2. **On-prem only.** Point `treblle_url` at your on-prem Treblle instance. Leave `secondary_treblle_url` unset.
+3. **Both.** Set `treblle_url` to your primary destination and `secondary_treblle_url` to a second one — for example, mirroring an on-prem instance to `https://ingress.treblle.com` as a cloud backup in case the on-prem box goes down. `secondary_treblle_url` accepts any URL; it isn't limited to Treblle Cloud.
+
+```json
+{
+  "api_key":    "YOUR_TREBLLE_API_KEY",
+  "sdk_token":  "YOUR_TREBLLE_SDK_TOKEN",
+  "treblle_url": "https://onprem.yourdomain.com/treblle",
+  "secondary_treblle_url": "https://ingress.treblle.com"
+}
+```
+
+Both destinations use the **same** `api_key`/`sdk_token` — this mirrors identical traffic to a second endpoint, it does not support sending to two different Treblle projects.
+
+**How it behaves under failure**, since the whole point of this feature is tolerating an unreliable destination:
+
+- Each destination has its own background queue, worker thread, and HTTP connection/circuit-breaker state. If the on-prem endpoint is unreachable, its queue backs up and its circuit breaker trips independently — the secondary destination keeps sending normally and is never blocked or slowed down by the other's outages.
+- If `secondary_treblle_url` is set to the same value as `treblle_url` (including matching the default when `treblle_url` is omitted), it's treated as a configuration mistake and ignored — a debug log entry is written and the agent falls back to single-destination behavior rather than sending duplicate traffic.
+- Enabling or disabling `secondary_treblle_url` is hot-reloaded like every other config field — no IIS restart needed.
+- If the secondary queue fails to allocate at startup (out of memory), the agent logs it and continues tracking to the primary destination only — a problem with the optional second destination never prevents the module from loading or serving requests.
+- Enabling a second destination roughly doubles the background CPU/network cost of tracking (one extra JSON payload build, queue push, and outbound HTTPS POST per tracked request) but adds **no latency to the request/response path itself** — payloads are queued after the response has already been sent to the client, exactly as with a single destination today.
 
 ---
 
@@ -311,7 +342,7 @@ build\tests\Release\TreblleTests.exe --gtest_list_tests
 |-------|----------------|
 | `DataMasker` | `MaskJson` — string/number/object/boolean masking, nesting, case-insensitivity, 500 KB size limit; `MaskHeaders` — header value redaction |
 | `Utils` | `JsonEscape`, `ToLower`, `StartsWithCI`, `ParseQueryPath`, `ParseQueryString`, `ComputeHostId` |
-| `Config` | JSON parsing of all fields, default values, `exclude_routes` array, `masked_keywords` array, `IsExcluded` with host-only and host+path rules |
+| `Config` | JSON parsing of all fields, default values, `exclude_routes` array, `masked_keywords` array, `IsExcluded` with host-only and host+path rules, `secondary_treblle_url` parsing and same-as-primary dedupe |
 | `AsyncQueue` | FIFO ordering, empty-queue timeout, shutdown signalling, 5 000-item drop-oldest limit, concurrent push/pop |
 | `BodyCapture` | `IsLikelyJson` — object, array, whitespace trimming, plain text, XML, mismatched braces |
 | `PayloadBuilder` | Full JSON structure against the sample payload, `api_key`/`sdk_token` placement, masking applied before assembly, truncated-body error object |
@@ -342,6 +373,8 @@ Common log entries:
 - `Treblle: WinHttpCrackUrl failed for URL: ...` — check `treblle_url` format
 - `Treblle: WinHttpSendRequest failed (0x...)` — network connectivity issue
 - `Treblle: ingress returned HTTP 401` — check `api_key` and `sdk_token`
+- `Treblle: secondary_treblle_url is identical to treblle_url — ignoring` — remove `secondary_treblle_url` or point it at a different endpoint
+- `Treblle: failed to allocate secondary AsyncQueue — secondary destination disabled` — out-of-memory at startup; primary destination is unaffected
 
 **Always set `debug` back to `false`** in production — Event Log writes have a small overhead.
 
