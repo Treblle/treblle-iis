@@ -9,9 +9,11 @@
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
-AsyncQueue* g_pQueue        = nullptr;
-HANDLE      g_hWorkerThread = nullptr;
-HMODULE     g_hModule       = nullptr;
+AsyncQueue* g_pQueue                 = nullptr;
+HANDLE      g_hWorkerThread          = nullptr;
+AsyncQueue* g_pSecondaryQueue        = nullptr;
+HANDLE      g_hSecondaryWorkerThread = nullptr;
+HMODULE     g_hModule                = nullptr;
 
 // ── DllMain ───────────────────────────────────────────────────────────────────
 
@@ -24,27 +26,42 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID) {
 }
 
 // ── Background worker ─────────────────────────────────────────────────────────
+//
+// Primary and secondary destinations each get their own queue, worker thread and
+// HttpSender (own circuit breaker / 429 backoff state). This is deliberate: if the
+// on-prem primary endpoint is unreachable, sends to it will block for up to
+// kHttpTimeoutMs each before failing. Sharing one thread between destinations
+// would let a stalled/timing-out primary delay or starve the secondary — exactly
+// backwards for a customer whose reason for wanting a secondary is that the
+// primary drops out.
 
-static DWORD WINAPI WorkerThreadProc(LPVOID) {
+static DWORD RunWorkerLoop(AsyncQueue* queue, bool secondary) {
     try {
         HttpSender sender;
         while (true) {
             std::string payload;
-            if (!g_pQueue->Pop(payload, INFINITE)) break;
+            if (!queue->Pop(payload, INFINITE)) break;
             auto cfg = Config::Instance().Get();
-            sender.Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
+            const std::string& url = secondary ? cfg->secondaryTreblleUrl : cfg->treblleUrl;
+            if (secondary && url.empty()) continue; // disabled mid-flight — drop
+            sender.Send(payload, url, cfg->sdkToken, cfg->debugMode);
         }
         // Drain any payloads already in the queue before exiting
         std::string payload;
-        while (g_pQueue->Pop(payload, 0)) {
+        while (queue->Pop(payload, 0)) {
             auto cfg = Config::Instance().Get();
-            HttpSender().Send(payload, cfg->treblleUrl, cfg->sdkToken, cfg->debugMode);
+            const std::string& url = secondary ? cfg->secondaryTreblleUrl : cfg->treblleUrl;
+            if (secondary && url.empty()) continue;
+            HttpSender().Send(payload, url, cfg->sdkToken, cfg->debugMode);
         }
     } catch (...) {
         LogDebug("Treblle: unhandled exception in worker thread — thread exiting", true);
     }
     return 0;
 }
+
+static DWORD WINAPI WorkerThreadProc(LPVOID)          { return RunWorkerLoop(g_pQueue, false); }
+static DWORD WINAPI SecondaryWorkerThreadProc(LPVOID) { return RunWorkerLoop(g_pSecondaryQueue, true); }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
@@ -55,23 +72,43 @@ HRESULT CTreblleAgentFactory::GetHttpModule(OUT CHttpModule** ppModule,
 }
 
 void CTreblleAgentFactory::Terminate() {
-    if (g_pQueue) g_pQueue->Shutdown();
-    if (g_hWorkerThread) {
-        DWORD waitResult = WaitForSingleObject(g_hWorkerThread, TreblleConst::kShutdownDrainMs);
-        CloseHandle(g_hWorkerThread);
-        g_hWorkerThread = nullptr;
+    if (g_pQueue)          g_pQueue->Shutdown();
+    if (g_pSecondaryQueue) g_pSecondaryQueue->Shutdown();
+
+    // Wait for both threads together, bounded by ONE kShutdownDrainMs window total —
+    // not kShutdownDrainMs per thread — so enabling a secondary destination doesn't
+    // double how long IIS waits during an app-pool recycle/shutdown.
+    HANDLE handles[2];
+    DWORD  handleCount = 0;
+    if (g_hWorkerThread)          handles[handleCount++] = g_hWorkerThread;
+    if (g_hSecondaryWorkerThread) handles[handleCount++] = g_hSecondaryWorkerThread;
+    if (handleCount > 0) {
+        WaitForMultipleObjects(handleCount, handles, TRUE, TreblleConst::kShutdownDrainMs);
+    }
+
+    auto FinishThread = [](HANDLE& hThread, AsyncQueue*& pQueue, const char* label) {
+        if (!hThread) {
+            delete pQueue;
+            pQueue = nullptr;
+            return;
+        }
+        DWORD waitResult = WaitForSingleObject(hThread, 0); // already covered by the combined wait above
+        CloseHandle(hThread);
+        hThread = nullptr;
         if (waitResult == WAIT_OBJECT_0) {
             // Thread exited cleanly — safe to delete queue
-            delete g_pQueue;
-            g_pQueue = nullptr;
+            delete pQueue;
+            pQueue = nullptr;
         } else {
             // Thread did not exit in time — leave queue alive to prevent crash
-            LogDebug("Treblle: worker thread did not exit within drain timeout — leaking queue to prevent crash", true);
+            LogDebug(std::string("Treblle: ") + label +
+                     " worker thread did not exit within drain timeout — leaking queue to prevent crash", true);
         }
-    } else {
-        delete g_pQueue;
-        g_pQueue = nullptr;
-    }
+    };
+
+    FinishThread(g_hWorkerThread,          g_pQueue,          "primary");
+    FinishThread(g_hSecondaryWorkerThread, g_pSecondaryQueue, "secondary");
+
     delete this;
 }
 
@@ -109,10 +146,27 @@ HRESULT __stdcall RegisterModule(DWORD,
             LogDebug("Treblle: CreateThread failed — worker will not run", true);
         }
 
+        // Secondary destination is opt-in and config-driven (hot-reloadable), so this
+        // thread/queue is always created — cheap when idle — and the worker itself
+        // no-ops whenever secondary_treblle_url is unset. Failure here is NOT fatal:
+        // the module must keep tracking to the primary destination regardless.
+        g_pSecondaryQueue = new(std::nothrow) AsyncQueue();
+        if (!g_pSecondaryQueue) {
+            LogDebug("Treblle: failed to allocate secondary AsyncQueue — secondary destination disabled", true);
+        } else {
+            g_hSecondaryWorkerThread = CreateThread(nullptr, 0, SecondaryWorkerThreadProc, nullptr, 0, nullptr);
+            if (!g_hSecondaryWorkerThread) {
+                LogDebug("Treblle: CreateThread failed for secondary worker — secondary destination disabled", true);
+                delete g_pSecondaryQueue;
+                g_pSecondaryQueue = nullptr;
+            }
+        }
+
         auto* pFactory = new(std::nothrow) CTreblleAgentFactory();
         if (!pFactory) {
             LogDebug("Treblle: failed to allocate CTreblleAgentFactory — E_OUTOFMEMORY", true);
             if (g_pQueue) { g_pQueue->Shutdown(); delete g_pQueue; g_pQueue = nullptr; }
+            if (g_pSecondaryQueue) { g_pSecondaryQueue->Shutdown(); delete g_pSecondaryQueue; g_pSecondaryQueue = nullptr; }
             return E_OUTOFMEMORY;
         }
 
@@ -125,6 +179,8 @@ HRESULT __stdcall RegisterModule(DWORD,
             LogDebug("Treblle: SetRequestNotifications failed — cleaning up", true);
             if (g_pQueue) { g_pQueue->Shutdown(); delete g_pQueue; g_pQueue = nullptr; }
             if (g_hWorkerThread) { CloseHandle(g_hWorkerThread); g_hWorkerThread = nullptr; }
+            if (g_pSecondaryQueue) { g_pSecondaryQueue->Shutdown(); delete g_pSecondaryQueue; g_pSecondaryQueue = nullptr; }
+            if (g_hSecondaryWorkerThread) { CloseHandle(g_hSecondaryWorkerThread); g_hSecondaryWorkerThread = nullptr; }
             return hr;
         }
 
@@ -410,6 +466,10 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnEndRequest(
         std::string payload = PayloadBuilder::Build(ctx_, *cfg, loadTimeMs, GetIISVersion(pCtx));
 
         if (g_pQueue) {
+            // Secondary destination shares credentials with primary, so the same
+            // payload is queued to both — copy first, primary gets the original moved.
+            if (g_pSecondaryQueue && cfg->HasSecondaryDestination())
+                g_pSecondaryQueue->Push(payload);
             g_pQueue->Push(std::move(payload));
         } else {
             LogDebug("Treblle: queue is null — payload dropped", true);

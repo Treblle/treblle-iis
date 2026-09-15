@@ -112,6 +112,12 @@ bool Config::LoadFromFile() {
         std::string url = j.value("treblle_url", std::string{});
         if (!url.empty()) newCfg->treblleUrl = url;
 
+        newCfg->secondaryTreblleUrl = j.value("secondary_treblle_url", std::string{});
+        if (!newCfg->secondaryTreblleUrl.empty() && newCfg->secondaryTreblleUrl == newCfg->treblleUrl) {
+            LogDebug("Treblle: secondary_treblle_url is identical to treblle_url — ignoring", true);
+            newCfg->secondaryTreblleUrl.clear();
+        }
+
         if (j.contains("exclude_routes") && j["exclude_routes"].is_array()) {
             for (const auto& route : j["exclude_routes"]) {
                 if (!route.is_object()) continue;

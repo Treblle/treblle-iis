@@ -15,6 +15,13 @@ struct TreblleConfig {
     std::vector<RouteFilter> excludeRoutes;
     std::vector<std::string> maskedKeywords; // keys whose values are replaced with '*'
     bool                     loaded      = false;
+
+    // Optional second ingress endpoint every tracked request is also mirrored to,
+    // e.g. a cloud workspace backing up an on-prem deployment. Reuses sdkToken/apiKey —
+    // same credentials, just a second destination. Empty means the feature is off.
+    std::string              secondaryTreblleUrl;
+
+    bool HasSecondaryDestination() const { return !secondaryTreblleUrl.empty(); }
 };
 
 // Thread-safe singleton that loads treblle.config from the DLL directory.

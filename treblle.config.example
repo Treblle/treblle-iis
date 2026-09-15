@@ -4,6 +4,8 @@
 
   "treblle_url": "https://ingress.treblle.com",
 
+  "secondary_treblle_url": "",
+
   "debug": false,
 
   "exclude_routes": [
