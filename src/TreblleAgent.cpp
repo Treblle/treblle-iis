@@ -395,12 +395,25 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnBeginRequest(
         PCSTR pCT = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
         std::string ct = pCT ? ToLower(pCT) : "";
 
-        if (ct.find("application/json") != std::string::npos) {
-            ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
-        } else if (ct.find("multipart/form-data") != std::string::npos) {
+        if (ct.find("multipart/form-data") != std::string::npos) {
             PCSTR pCL = pRaw->Headers.KnownHeaders[HttpHeaderContentLength].pRawValue;
             LONGLONG cl = pCL ? _atoi64(pCL) : 0;
             ctx_.requestBody = SummarizeMultipartBody(pCtx, pCT, cl);
+        } else {
+            ContentTypeClass ctClass = ClassifyContentType(ct);
+            if (ctClass == ContentTypeClass::Json) {
+                ctx_.requestBody = ReadRequestBody(pCtx, ctx_.requestBodyTruncated);
+            } else if (ctClass == ContentTypeClass::Ambiguous) {
+                // No/unrecognized Content-Type — GET/HEAD/DELETE naturally read back
+                // empty here, which is fine: an empty body just never confirms as
+                // JSON and requestBody stays unset, same as today.
+                std::string body = ReadRequestBody(pCtx, ctx_.requestBodyTruncated,
+                                                    TreblleConst::kUntypedSniffCapBytes);
+                if (IsLikelyJson(body) && IsValidJson(body)) {
+                    ctx_.requestBody = std::move(body);
+                }
+            }
+            // NotJson (e.g. x-www-form-urlencoded): leave requestBody empty, as before.
         }
     } catch (...) {
         LogDebug("Treblle: unhandled exception in OnBeginRequest", true);
@@ -425,13 +438,17 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
         if (!ctx_.responseHeadersDone) {
             PCSTR pCT  = pRaw->Headers.KnownHeaders[HttpHeaderContentType].pRawValue;
             std::string ct = pCT ? ToLower(pCT) : "";
-            bool isJson = ct.find("application/json") != std::string::npos;
-            if (!isJson) {
+            ContentTypeClass ctClass = ClassifyContentType(ct);
+
+            if (ctClass == ContentTypeClass::NotJson) {
                 LogDebug("Treblle: skip — response Content-Type \"" + ct + "\" is not JSON: "
                     + ctx_.internalName + ctx_.routePath, ctx_.debugMode);
                 ctx_.shouldTrack = false;
                 return RQ_NOTIFICATION_CONTINUE;
             }
+
+            ctx_.responseContentTypeAmbiguous = (ctClass == ContentTypeClass::Ambiguous);
+
             USHORT status = 0;
             pResp->GetStatus(&status);
             ctx_.statusCode = status;
@@ -439,7 +456,20 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnSendResponse(
             ctx_.responseHeadersDone = true;
         }
 
-        CaptureResponseChunks(pRaw, ctx_.responseBody, ctx_.responseSize, ctx_.responseBodyTruncated);
+        size_t captureCap = ctx_.responseContentTypeAmbiguous
+            ? TreblleConst::kUntypedSniffCapBytes
+            : TreblleConst::kMaxBodyBytes;
+        CaptureResponseChunks(pRaw, ctx_.responseBody, ctx_.responseSize,
+                               ctx_.responseBodyTruncated, captureCap);
+
+        // No Content-Type to go on — bail as soon as the body proves it isn't
+        // JSON-shaped, instead of buffering the rest of an unrelated payload.
+        if (ctx_.responseContentTypeAmbiguous && IsDefinitelyNotJsonStart(ctx_.responseBody)) {
+            LogDebug("Treblle: skip — untyped response body is not JSON-shaped: "
+                + ctx_.internalName + ctx_.routePath, ctx_.debugMode);
+            ctx_.shouldTrack = false;
+            return RQ_NOTIFICATION_CONTINUE;
+        }
     } catch (...) {
         LogDebug("Treblle: unhandled exception in OnSendResponse", true);
     }
@@ -453,6 +483,21 @@ REQUEST_NOTIFICATION_STATUS CTreblleAgent::OnEndRequest(
     IHttpContext* pCtx, IHttpEventProvider*) {
     if (!ctx_.shouldTrack || !ctx_.responseHeadersDone) return RQ_NOTIFICATION_CONTINUE;
     try {
+        // Content-Type never told us either way — the only signal left is
+        // whether the fully-captured body actually parses as JSON. A body cut
+        // off by the untyped sniff cap correctly fails this (its real closing
+        // bracket is beyond what we captured) and is skipped rather than guessed.
+        if (ctx_.responseContentTypeAmbiguous && ctx_.responseSize > 0) {
+            if (!IsLikelyJson(ctx_.responseBody) || !IsValidJson(ctx_.responseBody)) {
+                LogDebug("Treblle: skip — untyped response body did not parse as JSON: "
+                    + ctx_.internalName + ctx_.routePath, ctx_.debugMode);
+                return RQ_NOTIFICATION_CONTINUE;
+            }
+        }
+        // responseSize == 0 under a matched route (e.g. 204/304/HEAD) is trusted
+        // and tracked with an empty body — include_routes is the operator's
+        // explicit opt-in, and there's no body signal either way to contradict it.
+
         LARGE_INTEGER endTime;
         QueryPerformanceCounter(&endTime);
 

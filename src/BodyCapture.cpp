@@ -2,8 +2,9 @@
 #include "BodyCapture.h"
 #include "Constants.h"
 #include "Utils.h"
+#include "vendor/json.hpp"
 
-std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated) {
+std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated, size_t maxBytes) {
     truncated = false;
     IHttpRequest* pReq = pCtx->GetRequest();
 
@@ -18,7 +19,7 @@ std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated) {
         HRESULT hr = pReq->ReadEntityBody(buf, TreblleConst::kBodyReadBuffer, FALSE, &cbRead, nullptr);
         if (FAILED(hr) || cbRead == 0) break;
 
-        if (body.size() + cbRead > TreblleConst::kMaxBodyBytes) {
+        if (body.size() + cbRead > maxBytes) {
             truncated = true;
             break;
         }
@@ -43,7 +44,8 @@ std::string ReadRequestBody(IHttpContext* pCtx, bool& truncated) {
 void CaptureResponseChunks(HTTP_RESPONSE* pRaw,
                            std::string&   body,
                            LONGLONG&      totalSize,
-                           bool&          truncated) {
+                           bool&          truncated,
+                           size_t         maxBytes) {
     if (!pRaw) return;
 
     if (!pRaw->pEntityChunks) return;
@@ -57,8 +59,8 @@ void CaptureResponseChunks(HTTP_RESPONSE* pRaw,
 
         totalSize += len;
 
-        if (!truncated && body.size() < TreblleConst::kMaxBodyBytes) {
-            size_t canAppend = TreblleConst::kMaxBodyBytes - body.size();
+        if (!truncated && body.size() < maxBytes) {
+            size_t canAppend = maxBytes - body.size();
             if (len > canAppend) {
                 body.append(data, canAppend);
                 truncated = true;
@@ -241,4 +243,56 @@ bool IsLikelyJson(const std::string& body) {
     if (first == '{') return last == '}';
     if (first == '[') return last == ']';
     return false;
+}
+
+// ── Content-Type classification ─────────────────────────────────────────────
+
+ContentTypeClass ClassifyContentType(const std::string& contentTypeHeader) {
+    if (contentTypeHeader.empty()) return ContentTypeClass::Ambiguous;
+
+    std::string lower = ToLower(contentTypeHeader);
+    size_t semi = lower.find(';');
+    std::string media = semi != std::string::npos ? lower.substr(0, semi) : lower;
+
+    size_t b = media.find_first_not_of(" \t");
+    size_t e = media.find_last_not_of(" \t");
+    media = (b == std::string::npos) ? "" : media.substr(b, e - b + 1);
+
+    if (media.empty()) return ContentTypeClass::Ambiguous;
+
+    if (media == "application/json" || media == "text/json" ||
+        (media.size() >= 5 && media.compare(media.size() - 5, 5, "+json") == 0))
+        return ContentTypeClass::Json;
+
+    static const char* kNotJsonExact[] = {
+        "text/html", "text/css", "text/javascript", "application/javascript",
+        "application/pdf", "application/octet-stream",
+        "application/xml", "text/xml",
+        "application/x-www-form-urlencoded",
+    };
+    for (const char* ct : kNotJsonExact)
+        if (media == ct) return ContentTypeClass::NotJson;
+
+    static const char* kNotJsonPrefix[] = {
+        "image/", "font/", "video/", "audio/", "multipart/",
+    };
+    for (const char* prefix : kNotJsonPrefix)
+        if (media.rfind(prefix, 0) == 0) return ContentTypeClass::NotJson;
+
+    return ContentTypeClass::Ambiguous;
+}
+
+// ── Untyped-response sniffing ────────────────────────────────────────────────
+
+bool IsDefinitelyNotJsonStart(const std::string& bodySoFar) {
+    for (unsigned char c : bodySoFar) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        return c != '{' && c != '[';
+    }
+    return false; // all whitespace so far — undecided, keep buffering
+}
+
+bool IsValidJson(const std::string& body) {
+    if (body.empty()) return false;
+    return !nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false).is_discarded();
 }

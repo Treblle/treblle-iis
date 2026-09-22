@@ -8,6 +8,11 @@ struct RequestContext {
     bool responseBodyTruncated = false;
     bool debugMode             = false;
 
+    // Response Content-Type was missing or not recognized as JSON/non-JSON —
+    // the track/skip decision is deferred to OnEndRequest, once the (capped)
+    // body has been captured and can be parsed to confirm it either way.
+    bool responseContentTypeAmbiguous = false;
+
     LARGE_INTEGER startTime   = {};
     LARGE_INTEGER frequency   = {};
 

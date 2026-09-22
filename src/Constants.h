@@ -15,6 +15,13 @@ namespace TreblleConst {
     constexpr uint32_t kBodyReadBuffer     = 8192;              // ReadEntityBody chunk
     constexpr uint32_t kMultipartWindow    = 16384;             // bytes read for multipart scan
 
+    // Sniff cap for bodies with no (or an unrecognized) Content-Type. Bounds
+    // the cost of confirming JSON-by-parsing independently of kMaxBodyBytes —
+    // a large untyped body is more likely a file than an API payload, and one
+    // that doesn't confirm as JSON within this window is treated as unconfirmed
+    // rather than buffered further on the strength of a guess.
+    constexpr size_t   kUntypedSniffCapBytes = 256 * 1024;      // 256 KB
+
     // Data masking
     constexpr size_t kMaskSizeLimit        = 500 * 1024;        // skip masking above this size
     constexpr int    kMaxMaskDepth         = 64;                // max JSON nesting before bail-out

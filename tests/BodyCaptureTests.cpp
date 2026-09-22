@@ -182,3 +182,120 @@ TEST(BodyCapture, IsLikelyJson_MismatchedBraces_False) {
 TEST(BodyCapture, IsLikelyJson_QuotedString_False) {
     EXPECT_FALSE(IsLikelyJson("\"just a string\""));
 }
+
+// ── ClassifyContentType ───────────────────────────────────────────────────────
+
+TEST(ClassifyContentType, ApplicationJson_Json) {
+    EXPECT_EQ(ClassifyContentType("application/json"), ContentTypeClass::Json);
+}
+
+TEST(ClassifyContentType, ApplicationJsonWithCharset_Json) {
+    EXPECT_EQ(ClassifyContentType("application/json; charset=utf-8"), ContentTypeClass::Json);
+}
+
+TEST(ClassifyContentType, TextJson_Json) {
+    EXPECT_EQ(ClassifyContentType("text/json"), ContentTypeClass::Json);
+}
+
+TEST(ClassifyContentType, VendorJsonSuffix_Json) {
+    EXPECT_EQ(ClassifyContentType("application/vnd.api+json"), ContentTypeClass::Json);
+    EXPECT_EQ(ClassifyContentType("application/problem+json"), ContentTypeClass::Json);
+    EXPECT_EQ(ClassifyContentType("application/hal+json; charset=utf-8"), ContentTypeClass::Json);
+}
+
+TEST(ClassifyContentType, CaseInsensitive_Json) {
+    EXPECT_EQ(ClassifyContentType("APPLICATION/JSON"), ContentTypeClass::Json);
+}
+
+TEST(ClassifyContentType, Html_NotJson) {
+    EXPECT_EQ(ClassifyContentType("text/html; charset=utf-8"), ContentTypeClass::NotJson);
+}
+
+TEST(ClassifyContentType, Image_NotJson) {
+    EXPECT_EQ(ClassifyContentType("image/png"), ContentTypeClass::NotJson);
+}
+
+TEST(ClassifyContentType, Xml_NotJson) {
+    EXPECT_EQ(ClassifyContentType("application/xml"), ContentTypeClass::NotJson);
+    EXPECT_EQ(ClassifyContentType("text/xml"), ContentTypeClass::NotJson);
+}
+
+TEST(ClassifyContentType, Multipart_NotJson) {
+    EXPECT_EQ(ClassifyContentType("multipart/form-data; boundary=abc"), ContentTypeClass::NotJson);
+}
+
+TEST(ClassifyContentType, FormUrlEncoded_NotJson) {
+    EXPECT_EQ(ClassifyContentType("application/x-www-form-urlencoded"), ContentTypeClass::NotJson);
+}
+
+TEST(ClassifyContentType, Missing_Ambiguous) {
+    EXPECT_EQ(ClassifyContentType(""), ContentTypeClass::Ambiguous);
+}
+
+TEST(ClassifyContentType, TextPlain_Ambiguous) {
+    EXPECT_EQ(ClassifyContentType("text/plain"), ContentTypeClass::Ambiguous);
+}
+
+TEST(ClassifyContentType, UnrecognizedVendorType_Ambiguous) {
+    EXPECT_EQ(ClassifyContentType("application/x-something-unknown"), ContentTypeClass::Ambiguous);
+}
+
+// ── IsDefinitelyNotJsonStart ──────────────────────────────────────────────────
+
+TEST(IsDefinitelyNotJsonStart, Empty_Undecided) {
+    EXPECT_FALSE(IsDefinitelyNotJsonStart(""));
+}
+
+TEST(IsDefinitelyNotJsonStart, WhitespaceOnly_Undecided) {
+    EXPECT_FALSE(IsDefinitelyNotJsonStart("   \r\n"));
+}
+
+TEST(IsDefinitelyNotJsonStart, ObjectOpener_NotDefinite) {
+    EXPECT_FALSE(IsDefinitelyNotJsonStart("{\"partial"));
+}
+
+TEST(IsDefinitelyNotJsonStart, ArrayOpener_NotDefinite) {
+    EXPECT_FALSE(IsDefinitelyNotJsonStart("[1, 2"));
+}
+
+TEST(IsDefinitelyNotJsonStart, HtmlLike_Definite) {
+    EXPECT_TRUE(IsDefinitelyNotJsonStart("<html>"));
+}
+
+TEST(IsDefinitelyNotJsonStart, PlainText_Definite) {
+    EXPECT_TRUE(IsDefinitelyNotJsonStart("hello world"));
+}
+
+TEST(IsDefinitelyNotJsonStart, WhitespaceThenHtml_Definite) {
+    EXPECT_TRUE(IsDefinitelyNotJsonStart("  \r\n<root>"));
+}
+
+// ── IsValidJson ───────────────────────────────────────────────────────────────
+
+TEST(IsValidJson, WellFormedObject_True) {
+    EXPECT_TRUE(IsValidJson(R"({"name":"John"})"));
+}
+
+TEST(IsValidJson, WellFormedArray_True) {
+    EXPECT_TRUE(IsValidJson("[1, 2, 3]"));
+}
+
+TEST(IsValidJson, Empty_False) {
+    EXPECT_FALSE(IsValidJson(""));
+}
+
+TEST(IsValidJson, TruncatedObject_False) {
+    // Shaped like JSON (starts with '{') but cut off mid-stream — must fail a
+    // real parse even though it could pass the cheaper IsLikelyJson-style check.
+    EXPECT_FALSE(IsValidJson(R"({"name":"John", "items":[1,2,)"));
+}
+
+TEST(IsValidJson, JsonLikeButInvalid_False) {
+    // Starts and ends with matching brackets but isn't valid JSON internally
+    // (unquoted keys) — must be rejected by the strict parse.
+    EXPECT_FALSE(IsValidJson("{name: John}"));
+}
+
+TEST(IsValidJson, PlainText_False) {
+    EXPECT_FALSE(IsValidJson("hello world"));
+}
