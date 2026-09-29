@@ -150,6 +150,27 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Agent registered successfully." -ForegroundColor Green
 
+# TreblleAgent.dll is built x64-only. Without this precondition, IIS will try
+# to load it into 32-bit-enabled app pools too, which fails and takes the pool
+# down with a 503 instead of just skipping the module.
+& $appcmd set config /section:system.webServer/globalModules `
+    "/[name='TreblleAgent'].preCondition:bitness64" /commit:apphost | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Failed to set the bitness64 precondition. If any app pool has ""Enable 32-Bit Applications"" set to True, that pool may fail to start after this install."
+} else {
+    Write-Host "  Restricted the module to 64-bit worker processes (bitness64 precondition)." -ForegroundColor Green
+}
+
+# Warn about any app pools that won't be covered by the agent as a result.
+$thirtyTwoBitPools = & $appcmd list apppools /text:name | Where-Object {
+    (& $appcmd list apppool "$_" /text:enable32BitAppOnWin64) -eq "true"
+}
+if ($thirtyTwoBitPools) {
+    Write-Host ""
+    Write-Warning "The following app pools run in 32-bit mode and will NOT be monitored by Treblle (the module is skipped for them, not loaded):"
+    $thirtyTwoBitPools | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+}
+
 # --- Restart IIS -------------------------------------------------------------
 Write-Host ""
 Write-Host "Restarting IIS..." -ForegroundColor Cyan
