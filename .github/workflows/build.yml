@@ -40,15 +40,30 @@ jobs:
       - name: Build Release x64
         run: msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64 /m
 
-      - name: Upload DLL artifact
+      - name: Build Release Win32
+        run: msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=Win32 /m
+
+      - name: Rename x86 output
+        run: Copy-Item Release/TreblleAgent.dll Release/TreblleAgent-x86.dll
+
+      - name: Upload x64 DLL artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TreblleAgent-${{ github.sha }}
+          name: TreblleAgent-x64-${{ github.sha }}
           path: x64/Release/TreblleAgent.dll
           retention-days: 30
 
-      - name: Upload DLL to release
+      - name: Upload x86 DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreblleAgent-x86-${{ github.sha }}
+          path: Release/TreblleAgent-x86.dll
+          retention-days: 30
+
+      - name: Upload DLLs to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: x64/Release/TreblleAgent.dll
+          files: |
+            x64/Release/TreblleAgent.dll
+            Release/TreblleAgent-x86.dll

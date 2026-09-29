@@ -257,13 +257,36 @@ Restart-WebAppPool -Name "YourAppPoolName"      # or: iisreset
 
 | Cause | How to confirm | Fix |
 |---|---|---|
-| **32-bit app pool** - the DLL is x64-only | see command below | set a bitness precondition, or switch the pool to 64-bit |
+| **32-bit app pool** - the installed DLL is x64 | see command below | `install.ps1` sets a bitness precondition automatically as of this fix; on servers installed before that, apply it manually, switch the pool to 64-bit, or build+register the x86 DLL for that pool (below) |
 | **File ACLs** - app pool identity can't read `C:\iismodules\treblle` | Event Viewer → System → WAS/w3wp errors; site returns 503 | `icacls` grant (below) |
 | **DLL blocked** - downloaded from the internet (Zone.Identifier) | `Get-Item ... -Stream *` | `Unblock-File` |
 | **Antivirus / EDR** blocked injection into `w3wp.exe` | AV console; Defender detection log | add an exclusion for `C:\iismodules\treblle` |
-| **Wrong architecture** built | `dumpbin /headers` shows `x86` | rebuild `Release|x64` |
+| **Wrong architecture** built | `dumpbin /headers` shows the wrong machine type | rebuild `Release|x64` (or `Release|Win32` for a 32-bit pool, see below) |
 
 **32-bit app pool check and fix:**
+
+`install.ps1` now sets this precondition automatically on every install/re-install,
+so this is only needed on a server that was installed before that fix, or if the
+precondition was manually removed. Re-running `install.ps1` is the simplest fix.
+
+The solution also builds a **Win32** (x86) configuration
+(`msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=Win32` → `Release\TreblleAgent.dll`).
+`install.ps1` does not install or register it — it still targets x64 only, and the
+bitness64 precondition above means 32-bit pools are skipped rather than crashed. If you
+need a 32-bit pool actually monitored, register the x86 build by hand under a separate
+module name with a `bitness32` precondition so it doesn't collide with the x64 entry:
+
+```powershell
+$appcmd = "$env:windir\System32\inetsrv\appcmd.exe"
+& $appcmd install module /name:TreblleAgentX86 /image:"C:\iismodules\treblle\x86\TreblleAgent.dll"
+& $appcmd set config /section:system.webServer/globalModules `
+    "/[name='TreblleAgentX86'].preCondition:bitness32" /commit:apphost
+iisreset
+```
+
+Put the x86 DLL and its own `treblle.config` in a separate directory from the x64
+one (the agent reads the config from the same folder as the DLL), since the two
+builds cannot share a directory.
 
 ```powershell
 $appcmd = "$env:windir\System32\inetsrv\appcmd.exe"

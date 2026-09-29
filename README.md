@@ -34,7 +34,7 @@ IIS Worker Process (w3wp.exe)
 |-------------|---------|
 | Windows Server | 2022 or 2025 |
 | IIS | 10.0 |
-| Architecture | x64 only |
+| Architecture | x64 (installer targets 64-bit app pools; see [Build outputs](#build-outputs)) |
 | Privileges | Local Administrator (install only) |
 | Visual Studio (to build) | 2022 with "Desktop development with C++" |
 | Windows SDK (to build) | 10.0 |
@@ -57,7 +57,29 @@ Alternatively, build from the command line:
 msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=x64
 ```
 
-> **Pre-built release:** Download `TreblleAgent.dll` from the [Releases](../../releases) page and skip this step.
+> **Pre-built release:** Download `TreblleAgent.dll` from the [Releases](../../releases) page and skip this step. Each release also attaches `TreblleAgent-x86.dll`, the Win32 build described below.
+
+#### Build outputs
+
+The solution also has a **Win32** platform, which produces an x86 build of the same
+agent:
+
+```powershell
+msbuild TreblleAgent.sln /p:Configuration=Release /p:Platform=Win32
+```
+
+```
+Release\TreblleAgent.dll
+```
+
+The installer and the rest of this guide use the **x64** build — that is what
+`install.ps1` looks for and what gets registered with IIS. The x86 build is provided
+for anyone who needs to load the agent into a 32-bit worker process (an app pool with
+"Enable 32-Bit Applications" set to `True`) by hand; it is not wired into `install.ps1`
+or `uninstall.ps1`. If you install the x86 DLL yourself, register it under a distinct
+module name (e.g. `TreblleAgentX86`) with a `bitness32` precondition so it doesn't
+collide with the x64 registration — see the 32-bit app pool notes in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#step-2--is-the-dll-actually-loaded-into-the-worker-process).
 
 > **Downloaded from Releases?** Windows marks files downloaded from the internet as blocked and IIS may refuse to load them. Before running the installer, unblock the DLL:
 > ```powershell
