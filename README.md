@@ -81,6 +81,21 @@ module name (e.g. `TreblleAgentX86`) with a `bitness32` precondition so it doesn
 collide with the x64 registration — see the 32-bit app pool notes in
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#step-2--is-the-dll-actually-loaded-into-the-worker-process).
 
+#### Signing releases (maintainers)
+
+Release DLLs are code-signed with Treblle's Sectigo certificate before being
+attached to a GitHub release. This is a manual step done on macOS with the
+Sectigo USB token plugged in — it is not part of CI:
+
+```bash
+./scripts/sign-release.sh ~/Downloads/TreblleAgent.dll ~/Downloads/TreblleAgent-x86.dll
+```
+
+See the comments in [`scripts/sign-release.sh`](scripts/sign-release.sh) for
+requirements (`osslsigncode`, `libp11`, the IDPrime/SafeNet token driver) and
+configuration. It prompts for the token PIN interactively and never stores it
+anywhere.
+
 > **Downloaded from Releases?** Windows marks files downloaded from the internet as blocked and IIS may refuse to load them. Before running the installer, unblock the DLL:
 > ```powershell
 > Unblock-File -Path "TreblleAgent.dll"

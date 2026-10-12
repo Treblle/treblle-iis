@@ -17,12 +17,22 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host ""
 
 # --- Remove module registration ----------------------------------------------
+# TreblleAgentX86 is the hand-registered 32-bit entry from the dual-registration
+# recipe in TROUBLESHOOTING.md. It has to go too: this script deletes $InstallDir
+# (including the x86 subfolder it points at), and a globalModules entry whose image
+# is gone takes every matching worker process down with error 0x7E
+# (ERROR_MOD_NOT_FOUND) until rapid-fail protection disables the pool.
 if (Test-Path $appcmd) {
-    $existing = & $appcmd list module /name:TreblleAgent 2>$null
-    if ($existing) {
-        & $appcmd uninstall module /module.name:TreblleAgent | Out-Null
-        Write-Host "Agent unregistered from IIS." -ForegroundColor Green
-    } else {
+    $removed = $false
+    foreach ($moduleName in @("TreblleAgent", "TreblleAgentX86")) {
+        $existing = & $appcmd list module /name:$moduleName 2>$null
+        if ($existing) {
+            & $appcmd uninstall module /module.name:$moduleName | Out-Null
+            Write-Host "Unregistered $moduleName from IIS." -ForegroundColor Green
+            $removed = $true
+        }
+    }
+    if (-not $removed) {
         Write-Host "Agent was not registered in IIS." -ForegroundColor Yellow
     }
 } else {

@@ -262,6 +262,71 @@ Restart-WebAppPool -Name "YourAppPoolName"      # or: iisreset
 | **DLL blocked** - downloaded from the internet (Zone.Identifier) | `Get-Item ... -Stream *` | `Unblock-File` |
 | **Antivirus / EDR** blocked injection into `w3wp.exe` | AV console; Defender detection log | add an exclusion for `C:\iismodules\treblle` |
 | **Wrong architecture** built | `dumpbin /headers` shows the wrong machine type | rebuild `Release|x64` (or `Release|Win32` for a 32-bit pool, see below) |
+| **Stale registration** - a `globalModules` entry points at a DLL that is no longer on disk | event 2280 with error `7E000000`, and `Test-Path` on the registered image returns `False` | remove the orphaned entry (below) |
+
+**Reading the error code in event 2280 / 2282:** the `Binary` field is the Win32
+error, little-endian. `C1000000` is `0xC1` (193, `ERROR_BAD_EXE_FORMAT`) - a bitness
+mismatch, fixed with the right precondition. `7E000000` is `0x7E` (126,
+`ERROR_MOD_NOT_FOUND`) - a different problem entirely: IIS found the registration but
+could not load the image.
+
+**Fixing error 0x7E (126):**
+
+The usual cause is an orphaned registration: a `globalModules` entry that outlived the
+DLL it points at. Registrations live in `applicationHost.config` and are completely
+independent of the filesystem, so deleting, moving or renaming a DLL does **not**
+unregister it - IIS keeps trying to load the old path forever.
+
+The dual-registration recipe below is the common way into this. It adds a
+`TreblleAgentX86` entry pointing into `C:\iismodules\treblle\x86\`; anything that
+later clears out that folder - tidying up by hand, the in-place swap in
+[MIGRATING-TO-X86.md](MIGRATING-TO-X86.md), or a `Remove-Item -Recurse` on
+`C:\iismodules\treblle` - leaves the entry behind. Every 32-bit worker process then
+fails to start: five restarts in five minutes, then WAS event 5002 disables the pool,
+and the pool stays disabled even once the cause is fixed.
+
+Check what is actually registered and whether each image exists:
+
+```powershell
+$appcmd = "$env:windir\System32\inetsrv\appcmd.exe"
+& $appcmd list config /section:system.webServer/globalModules |
+    Select-String "Treblle" |
+    ForEach-Object {
+        $img = [regex]::Match($_, 'image="([^"]+)"').Groups[1].Value
+        "{0,-60} exists={1}" -f $img, (Test-Path $img)
+    }
+```
+
+Any line with `exists=False` is the culprit. Either put the DLL back at that path, or
+drop the registration:
+
+```powershell
+& $appcmd uninstall module /module.name:TreblleAgentX86
+iisreset /noforce
+```
+
+Then re-enable the pools that rapid-fail protection shut down (they stay stopped even
+after the cause is fixed):
+
+```powershell
+Import-Module WebAdministration
+Get-ChildItem IIS:\AppPools | Where-Object { $_.State -ne "Started" } | ForEach-Object {
+    Start-WebAppPool -Name $_.Name
+    "Started $($_.Name)"
+}
+```
+
+If the image *does* exist and you still get 0x7E, the DLL loaded but one of its
+dependencies did not. `Release|Win32` and `Release|x64` link the CRT statically
+(`/MT`) and import only `winhttp.dll`, `ws2_32.dll` and `iphlpapi.dll`, so a release
+build has nothing to miss - a debug build does, because it needs `ucrtbased.dll`,
+which ships with the Windows SDK and not with Windows. Confirm you deployed a release
+build:
+
+```powershell
+dumpbin /dependents "C:\iismodules\treblle\x86\TreblleAgent.dll"
+```
+
 
 **32-bit app pool check and fix:**
 
@@ -287,6 +352,25 @@ iisreset
 Put the x86 DLL and its own `treblle.config` in a separate directory from the x64
 one (the agent reads the config from the same folder as the DLL), since the two
 builds cannot share a directory.
+
+> **Backing this out is two steps, and the order matters.** Unregister the module
+> *before* you delete, move or rename anything under `C:\iismodules\treblle\x86\`:
+>
+> ```powershell
+> & $appcmd uninstall module /module.name:TreblleAgentX86
+> Remove-Item -Recurse -Force "C:\iismodules\treblle\x86"
+> iisreset /noforce
+> ```
+>
+> Deleting the folder on its own does not unregister anything. The leftover entry
+> fails every 32-bit worker process with error 0x7E and disables the pool - see
+> [Fixing error 0x7E](#fixing-error-0x7e-126) above. `uninstall.ps1` handles both
+> module names if you use it, but this recipe is registered by hand, so backing it
+> out is by hand too.
+
+> **All app pools on this server are 32-bit, and the x64 build was installed by
+> mistake?** You don't need the dual-registration above — see
+> [MIGRATING-TO-X86.md](MIGRATING-TO-X86.md) for the simpler in-place swap.
 
 ```powershell
 $appcmd = "$env:windir\System32\inetsrv\appcmd.exe"
